@@ -24,6 +24,14 @@
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
   --radius: 0.625rem;
+
+  /* Satisfactory-leaning brand palette. Not a 1:1 copy — used for accents on
+     the hero and interactive highlights. */
+  --ficsit-orange: #f29c14;
+  --ficsit-orange-bright: #ffb340;
+  --ficsit-deep: #0c1f2b;
+  --ficsit-teal: #0e3b48;
+  --ficsit-hazard: #f5d000;
 }
 
 .dark {
@@ -74,6 +82,10 @@
   --radius-xl: calc(var(--radius) + 4px);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-display);
+  --color-ficsit-orange: var(--ficsit-orange);
+  --color-ficsit-orange-bright: var(--ficsit-orange-bright);
+  --color-ficsit-hazard: var(--ficsit-hazard);
 }
 
 @layer base {

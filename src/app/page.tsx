@@ -8,7 +8,7 @@ import { InventoryTab } from "@/components/inventory-tab";
 import { ComingSoonTab } from "@/components/coming-soon-tab";
 import { PendingChanges } from "@/components/pending-changes";
 import { PrivacyBanner } from "@/components/privacy-banner";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { Hero } from "@/components/hero";
 import { useSaveStore } from "@/store/save-store";
 
 export default function Home() {
@@ -17,15 +17,7 @@ export default function Home() {
   return (
     <PageDropTarget>
       <div className="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-6 min-h-screen">
-        <header className="flex items-center justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-semibold">Satisfactory Save Editor</h1>
-            <p className="text-sm text-muted-foreground">
-              Edit your 1.2 save in-browser. No upload, no backend.
-            </p>
-          </div>
-          <ThemeToggle />
-        </header>
+        <Hero />
 
         <PrivacyBanner />
 
