@@ -43,3 +43,15 @@ next-env.d.ts
 # Pre-bundled worker output (built from src/workers/save-worker.ts)
 /public/save-worker.js
 /public/save-worker.js.map
+
+# Raw game Docs.json files (large, owned by Coffee Stain). The parsed,
+# slimmed-down JSON in src/data/ is checked in instead.
+/data/*.json
+
+# Sample .sav files used for local smoke tests — personal saves shouldn't
+# land in the repo. Scripts under scripts/test-*-roundtrip.ts expect one at
+# test/<name>.sav but the file itself stays out of version control.
+/test/*.sav
+
+# Stale binary Bun lockfile — bun.lock (text) is the source of truth.
+bun.lockb

@@ -1,10 +1,33 @@
 /**
- * Player inventory slot count edit.
+ * Player inventory & hand (arm-equipment) slot count edits.
  *
- *   typePath: /Game/FactoryGame/Character/Player/BP_PlayerState.BP_PlayerState_C
- *   property: mNumObservedInventorySlots (IntProperty)
+ * SOURCE OF TRUTH — empirically confirmed on a 1.2 save:
  *
- * Vanilla default is 18. Multiple BP_PlayerState_C entries exist in multiplayer.
+ *   /Game/FactoryGame/Unlocks/BP_UnlockSubsystem.BP_UnlockSubsystem_C
+ *   instanceName: Persistent_Level:PersistentLevel.unlockSubsystem
+ *
+ *     mNumTotalInventorySlots     (IntProperty) — world-level inventory unlock count
+ *     mNumTotalArmEquipmentSlots  (IntProperty) — world-level hand slot unlock count
+ *
+ * Slot unlocks happen via MAM research, which is a world-level event, so these
+ * values are the same for every player in a session.
+ *
+ * The BP_PlayerState_C objects ALSO carry a per-player observed copy of the
+ * inventory count:
+ *
+ *   /Game/FactoryGame/Character/Player/BP_PlayerState.BP_PlayerState_C
+ *     mNumObservedInventorySlots  (IntProperty) — per-player cached copy
+ *
+ * The per-player copy is replicated from the world value at runtime. On save
+ * load the game re-syncs from the world value, so writing only the per-player
+ * copy is insufficient — the master must be written too. We update both for
+ * immediate consistency.
+ *
+ * For hand slots the BP_PlayerState_C in observed 1.2 saves carries NO
+ * corresponding property — older modding docs reference `mNumArmSlots` on the
+ * player state but the game no longer serializes it. So we only write the
+ * world-level value for hand slots and do not synthesize anything on
+ * BP_PlayerState_C.
  */
 import type {
   SatisfactorySave,
@@ -15,14 +38,33 @@ import type {
 export const PLAYER_STATE_TYPE_PATH =
   "/Game/FactoryGame/Character/Player/BP_PlayerState.BP_PlayerState_C";
 
+export const UNLOCK_SUBSYSTEM_TYPE_PATH =
+  "/Game/FactoryGame/Unlocks/BP_UnlockSubsystem.BP_UnlockSubsystem_C";
+
 export const VANILLA_INVENTORY_SLOTS = 18;
 export const MAX_INVENTORY_SLOTS = 120;
+
+export const VANILLA_ARM_SLOTS = 1;
+/** Vanilla unlocks cap at 6; we allow some headroom for the editor. */
+export const MAX_ARM_SLOTS = 12;
 
 export type PlayerInventoryInfo = {
   instanceName: string;
   /** Best-effort identifier: PlayerState's mCachedPlayerName (StrProperty) when present. */
   displayName: string;
-  slots: number;
+  /** Per-player cached inventory slot count. null if the property is absent. */
+  observedInventorySlots: number | null;
+};
+
+export type SlotsState = {
+  /** True if the world's BP_UnlockSubsystem_C was found in the save. */
+  hasUnlockSubsystem: boolean;
+  /** World-level master inventory slot count (the source of truth). */
+  inventorySlots: number;
+  /** World-level master hand-equipment slot count. */
+  armSlots: number;
+  /** Players found in the save, with their per-player observed inventory count. */
+  players: PlayerInventoryInfo[];
 };
 
 const allObjects = (save: SatisfactorySave): SaveObject[] => {
@@ -36,8 +78,14 @@ const allObjects = (save: SatisfactorySave): SaveObject[] => {
 const findPlayerStates = (save: SatisfactorySave): SaveObject[] =>
   allObjects(save).filter((o) => o.typePath === PLAYER_STATE_TYPE_PATH);
 
-const readSlots = (obj: SaveObject): number | null => {
-  const prop = obj.properties?.["mNumObservedInventorySlots"] as
+const findUnlockSubsystem = (save: SatisfactorySave): SaveObject | undefined =>
+  allObjects(save).find((o) => o.typePath === UNLOCK_SUBSYSTEM_TYPE_PATH);
+
+const readIntProperty = (
+  obj: SaveObject,
+  name: string
+): number | null => {
+  const prop = obj.properties?.[name] as
     | IntProperty
     | IntProperty[]
     | undefined;
@@ -59,8 +107,38 @@ export function listPlayers(save: SatisfactorySave): PlayerInventoryInfo[] {
   return findPlayerStates(save).map((obj) => ({
     instanceName: obj.instanceName,
     displayName: readDisplayName(obj),
-    slots: readSlots(obj) ?? VANILLA_INVENTORY_SLOTS,
+    observedInventorySlots: readIntProperty(obj, "mNumObservedInventorySlots"),
   }));
+}
+
+export function getSlotsState(save: SatisfactorySave): SlotsState {
+  const unlock = findUnlockSubsystem(save);
+  const players = listPlayers(save);
+
+  if (!unlock) {
+    // Older save format or unknown variant. Fall back to the most-common
+    // observed inventory count across players; default to vanilla.
+    const firstObserved = players
+      .map((p) => p.observedInventorySlots)
+      .find((v): v is number => v !== null);
+    return {
+      hasUnlockSubsystem: false,
+      inventorySlots: firstObserved ?? VANILLA_INVENTORY_SLOTS,
+      armSlots: VANILLA_ARM_SLOTS,
+      players,
+    };
+  }
+
+  return {
+    hasUnlockSubsystem: true,
+    inventorySlots:
+      readIntProperty(unlock, "mNumTotalInventorySlots") ??
+      VANILLA_INVENTORY_SLOTS,
+    armSlots:
+      readIntProperty(unlock, "mNumTotalArmEquipmentSlots") ??
+      VANILLA_ARM_SLOTS,
+    players,
+  };
 }
 
 const synthesizeIntProperty = (
@@ -73,37 +151,66 @@ const synthesizeIntProperty = (
   value,
 });
 
-export function setInventorySlots(
-  save: SatisfactorySave,
-  args: { instanceName: string; slots: number }
-): void {
-  if (
-    !Number.isInteger(args.slots) ||
-    args.slots < 1 ||
-    args.slots > MAX_INVENTORY_SLOTS
-  ) {
-    throw new Error(
-      `Invalid slot count ${args.slots} (allowed 1..${MAX_INVENTORY_SLOTS}).`
-    );
-  }
-  const obj = findPlayerStates(save).find(
-    (o) => o.instanceName === args.instanceName
-  );
-  if (!obj) {
-    throw new Error(`No BP_PlayerState_C with instanceName ${args.instanceName}`);
-  }
-  const existing = obj.properties?.["mNumObservedInventorySlots"] as
+const writeIntProperty = (
+  obj: SaveObject,
+  name: string,
+  value: number,
+  synthesizeIfMissing: boolean
+): boolean => {
+  const existing = obj.properties?.[name] as
     | IntProperty
     | IntProperty[]
     | undefined;
   if (existing) {
     const single = Array.isArray(existing) ? existing[0] : existing;
-    single.value = args.slots;
-  } else {
-    obj.properties = obj.properties ?? {};
-    obj.properties["mNumObservedInventorySlots"] = synthesizeIntProperty(
-      "mNumObservedInventorySlots",
-      args.slots
+    single.value = value;
+    return true;
+  }
+  if (!synthesizeIfMissing) return false;
+  obj.properties = obj.properties ?? {};
+  obj.properties[name] = synthesizeIntProperty(name, value);
+  return true;
+};
+
+export function setInventorySlots(save: SatisfactorySave, slots: number): void {
+  if (!Number.isInteger(slots) || slots < 1 || slots > MAX_INVENTORY_SLOTS) {
+    throw new Error(
+      `Invalid inventory slot count ${slots} (allowed 1..${MAX_INVENTORY_SLOTS}).`
     );
   }
+  // 1) World-level master write. This is the source of truth; the game
+  //    re-syncs per-player observed values from it on load.
+  const unlock = findUnlockSubsystem(save);
+  if (!unlock) {
+    throw new Error(
+      "Save has no BP_UnlockSubsystem_C; cannot set inventory slot count."
+    );
+  }
+  writeIntProperty(unlock, "mNumTotalInventorySlots", slots, true);
+
+  // 2) Per-player observed write — only update where the property already
+  //    exists. Synthesize if missing so the player immediately sees the new
+  //    count without waiting for a replication tick on first load.
+  for (const ps of findPlayerStates(save)) {
+    writeIntProperty(ps, "mNumObservedInventorySlots", slots, true);
+  }
+}
+
+export function setArmSlots(save: SatisfactorySave, slots: number): void {
+  if (!Number.isInteger(slots) || slots < 1 || slots > MAX_ARM_SLOTS) {
+    throw new Error(
+      `Invalid hand slot count ${slots} (allowed 1..${MAX_ARM_SLOTS}).`
+    );
+  }
+  const unlock = findUnlockSubsystem(save);
+  if (!unlock) {
+    throw new Error(
+      "Save has no BP_UnlockSubsystem_C; cannot set hand slot count."
+    );
+  }
+  writeIntProperty(unlock, "mNumTotalArmEquipmentSlots", slots, true);
+
+  // BP_PlayerState_C carries no per-player hand-slot property in observed 1.2
+  // saves, so we deliberately do not write to player states for arm slots.
+  // If a future save format adds one, update this comment and write here.
 }

@@ -4,13 +4,14 @@ import { create } from "zustand";
 import { getSaveWorker } from "@/lib/worker-client";
 import type {
   LoadResult,
+  ResearchSnapshot,
   SaveSummary,
 } from "@/workers/save-worker";
 import type { PurityState } from "@/lib/edits/purity";
-import type { PlayerInventoryInfo } from "@/lib/edits/inventory";
+import type { SlotsState } from "@/lib/edits/inventory";
 import type { PurityTarget } from "@/lib/parser/types";
 
-export type StagedEditKind = "purity" | "inventory";
+export type StagedEditKind = "purity" | "inventory" | "armSlots" | "research";
 
 export type StagedEdit =
   | {
@@ -25,10 +26,22 @@ export type StagedEdit =
       id: string;
       kind: "inventory";
       label: string;
-      instanceName: string;
-      displayName: string;
       from: number;
       to: number;
+    }
+  | {
+      id: string;
+      kind: "armSlots";
+      label: string;
+      from: number;
+      to: number;
+    }
+  | {
+      id: string;
+      kind: "research";
+      label: string;
+      /** Net unlock count: positive = unlocks added, negative = removed. */
+      delta: number;
     };
 
 export type DownloadVerification =
@@ -37,7 +50,8 @@ export type DownloadVerification =
   | {
       state: "ok";
       purity: PurityState;
-      players: PlayerInventoryInfo[];
+      slots: SlotsState;
+      research: ResearchSnapshot;
       bytes: number;
     }
   | {
@@ -56,7 +70,11 @@ export interface SaveState {
 
   summary: SaveSummary | null;
   purity: PurityState | null;
-  players: PlayerInventoryInfo[];
+  slots: SlotsState | null;
+  research: ResearchSnapshot | null;
+  /** Class names of MAM schematics unlocked at file-load time. Used to compute
+   *  the "net delta" of staged research edits. */
+  researchBaseline: Set<string>;
   staged: StagedEdit[];
   verification: DownloadVerification;
 
@@ -64,7 +82,16 @@ export interface SaveState {
   reset: () => Promise<void>;
 
   stagePurity: (target: PurityTarget) => Promise<void>;
-  stageInventory: (instanceName: string, slots: number) => Promise<void>;
+  stageInventory: (slots: number) => Promise<void>;
+  stageArmSlots: (slots: number) => Promise<void>;
+  stageSchematicUnlocked: (
+    className: string,
+    unlocked: boolean
+  ) => Promise<void>;
+  stageBulkSchematicUnlocked: (
+    unlocked: boolean,
+    classNames: string[]
+  ) => Promise<void>;
   removeStaged: (id: string) => void;
 
   verifyAndDownload: () => Promise<void>;
@@ -76,6 +103,49 @@ const SIZE_WARN_BYTES = 50 * 1024 * 1024;
 let nextId = 0;
 const newId = () => `edit-${++nextId}`;
 
+/**
+ * Folds a fresh ResearchSnapshot into the store state, replacing any prior
+ * staged research edit with one whose label reflects the net delta from the
+ * baseline at file-load time. Returns a partial state for `set`.
+ */
+const updateResearchEdit = (
+  s: SaveState,
+  research: ResearchSnapshot,
+  slots: SlotsState
+): Partial<SaveState> => {
+  const current = new Set(research.unlockedClassNames);
+  const baseline = s.researchBaseline;
+  let added = 0;
+  let removed = 0;
+  for (const c of current) if (!baseline.has(c)) added += 1;
+  for (const c of baseline) if (!current.has(c)) removed += 1;
+  const delta = added - removed;
+  const otherEdits = s.staged.filter((e) => e.kind !== "research");
+  if (added === 0 && removed === 0) {
+    return {
+      research,
+      slots,
+      staged: otherEdits,
+      verification: { state: "idle" },
+    };
+  }
+  const parts: string[] = [];
+  if (added > 0) parts.push(`+${added} unlocked`);
+  if (removed > 0) parts.push(`-${removed} locked`);
+  const edit: StagedEdit = {
+    id: newId(),
+    kind: "research",
+    label: `MAM research: ${parts.join(", ")}`,
+    delta,
+  };
+  return {
+    research,
+    slots,
+    staged: [...otherEdits, edit],
+    verification: { state: "idle" },
+  };
+};
+
 export const useSaveStore = create<SaveState>((set, get) => ({
   loading: false,
   loadProgress: 0,
@@ -84,7 +154,9 @@ export const useSaveStore = create<SaveState>((set, get) => ({
   errorMessage: null,
   summary: null,
   purity: null,
-  players: [],
+  slots: null,
+  research: null,
+  researchBaseline: new Set(),
   staged: [],
   verification: { state: "idle" },
 
@@ -97,7 +169,9 @@ export const useSaveStore = create<SaveState>((set, get) => ({
       errorMessage: null,
       summary: null,
       purity: null,
-      players: [],
+      slots: null,
+      research: null,
+      researchBaseline: new Set(),
       staged: [],
       verification: { state: "idle" },
     });
@@ -132,7 +206,9 @@ export const useSaveStore = create<SaveState>((set, get) => ({
         loadMessage: "",
         summary: result.summary,
         purity: result.purity,
-        players: result.players,
+        slots: result.slots,
+        research: result.research,
+        researchBaseline: new Set(result.research.unlockedClassNames),
       });
       if (file.size > SIZE_WARN_BYTES) {
         // Just log; UI can also surface the size.
@@ -161,7 +237,9 @@ export const useSaveStore = create<SaveState>((set, get) => ({
     set({
       summary: null,
       purity: null,
-      players: [],
+      slots: null,
+      research: null,
+      researchBaseline: new Set(),
       staged: [],
       verification: { state: "idle" },
       errorMessage: null,
@@ -196,30 +274,66 @@ export const useSaveStore = create<SaveState>((set, get) => ({
     }));
   },
 
-  async stageInventory(instanceName, slots) {
+  async stageInventory(slots) {
     const { api } = getSaveWorker();
-    const before = get().players.find((p) => p.instanceName === instanceName);
-    if (!before) throw new Error(`No such player ${instanceName}`);
-    const players = await api.setInventorySlots({ instanceName, slots });
+    const before = get().slots;
+    if (!before) throw new Error("No save loaded.");
+    const next = await api.setInventorySlots(slots);
     const edit: StagedEdit = {
       id: newId(),
       kind: "inventory",
-      label: `${before.displayName}: ${before.slots} → ${slots} slots`,
-      instanceName,
-      displayName: before.displayName,
-      from: before.slots,
+      label: `Inventory slots: ${before.inventorySlots} → ${slots}`,
+      from: before.inventorySlots,
       to: slots,
     };
     set((s) => ({
-      players,
+      slots: next,
       staged: [
-        ...s.staged.filter(
-          (e) => !(e.kind === "inventory" && e.instanceName === instanceName)
-        ),
+        ...s.staged.filter((e) => e.kind !== "inventory"),
         edit,
       ],
       verification: { state: "idle" },
     }));
+  },
+
+  async stageArmSlots(slots) {
+    const { api } = getSaveWorker();
+    const before = get().slots;
+    if (!before) throw new Error("No save loaded.");
+    const next = await api.setArmSlots(slots);
+    const edit: StagedEdit = {
+      id: newId(),
+      kind: "armSlots",
+      label: `Hand slots: ${before.armSlots} → ${slots}`,
+      from: before.armSlots,
+      to: slots,
+    };
+    set((s) => ({
+      slots: next,
+      staged: [
+        ...s.staged.filter((e) => e.kind !== "armSlots"),
+        edit,
+      ],
+      verification: { state: "idle" },
+    }));
+  },
+
+  async stageSchematicUnlocked(className, unlocked) {
+    const { api } = getSaveWorker();
+    const { research, slots } = await api.setSchematicUnlocked({
+      className,
+      unlocked,
+    });
+    set((s) => updateResearchEdit(s, research, slots));
+  },
+
+  async stageBulkSchematicUnlocked(unlocked, classNames) {
+    const { api } = getSaveWorker();
+    const { research, slots } = await api.setBulkSchematicUnlocked(
+      unlocked,
+      classNames
+    );
+    set((s) => updateResearchEdit(s, research, slots));
   },
 
   removeStaged(id) {
@@ -236,9 +350,10 @@ export const useSaveStore = create<SaveState>((set, get) => ({
     try {
       const result = await api.verifyRoundTrip();
       const intended = get().purity;
+      const intendedSlots = get().slots;
       // If the user's intent is captured in the live in-memory state, the
       // round-tripped state must match it.
-      const match =
+      const purityMatch =
         intended &&
         intended.worldSetting === result.purity.worldSetting &&
         Object.keys(intended.perType).every((tp) => {
@@ -251,6 +366,21 @@ export const useSaveStore = create<SaveState>((set, get) => ({
             a.Unset === b.Unset
           );
         });
+      const slotsMatch =
+        !intendedSlots ||
+        (intendedSlots.inventorySlots === result.slots.inventorySlots &&
+          intendedSlots.armSlots === result.slots.armSlots);
+      const intendedResearch = get().research;
+      const researchMatch =
+        !intendedResearch ||
+        (intendedResearch.unlockedClassNames.length ===
+          result.research.unlockedClassNames.length &&
+          new Set(intendedResearch.unlockedClassNames).size ===
+            new Set([
+              ...intendedResearch.unlockedClassNames,
+              ...result.research.unlockedClassNames,
+            ]).size);
+      const match = purityMatch && slotsMatch && researchMatch;
       if (!match) {
         set({
           verification: {
@@ -266,7 +396,8 @@ export const useSaveStore = create<SaveState>((set, get) => ({
         verification: {
           state: "ok",
           purity: result.purity,
-          players: result.players,
+          slots: result.slots,
+          research: result.research,
           bytes: result.bytes,
         },
       });

@@ -5,6 +5,8 @@ import { FilePicker, PageDropTarget } from "@/components/file-picker";
 import { SaveSummary } from "@/components/save-summary";
 import { PurityTab } from "@/components/purity-tab";
 import { InventoryTab } from "@/components/inventory-tab";
+import { MamResearchTab } from "@/components/mam-research-tab";
+import { HardDriveTab } from "@/components/hard-drive-tab";
 import { ComingSoonTab } from "@/components/coming-soon-tab";
 import { PendingChanges } from "@/components/pending-changes";
 import { PrivacyBanner } from "@/components/privacy-banner";
@@ -31,8 +33,8 @@ export default function Home() {
               <TabsList className="flex flex-wrap h-auto">
                 <TabsTrigger value="purity">Purity</TabsTrigger>
                 <TabsTrigger value="inventory">Inventory</TabsTrigger>
-                <TabsTrigger value="schematics">Schematics</TabsTrigger>
                 <TabsTrigger value="research">MAM Research</TabsTrigger>
+                <TabsTrigger value="harddrive">Hard Drives</TabsTrigger>
                 <TabsTrigger value="phase">Game Phase</TabsTrigger>
               </TabsList>
 
@@ -42,17 +44,11 @@ export default function Home() {
               <TabsContent value="inventory">
                 <InventoryTab />
               </TabsContent>
-              <TabsContent value="schematics">
-                <ComingSoonTab
-                  title="Schematics"
-                  body="Bulk-unlock alternates, MAM, AWESOME shop, etc. Coming soon. The plumbing is in place; the UI for cross-referencing Docs.json is the next milestone."
-                />
-              </TabsContent>
               <TabsContent value="research">
-                <ComingSoonTab
-                  title="MAM research trees"
-                  body="Coming soon. Will toggle entries in BP_ResearchManager_C.mUnlockedResearchTrees, with a clear note that individual nodes still need to be unlocked separately."
-                />
+                <MamResearchTab />
+              </TabsContent>
+              <TabsContent value="harddrive">
+                <HardDriveTab />
               </TabsContent>
               <TabsContent value="phase">
                 <ComingSoonTab

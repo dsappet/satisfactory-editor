@@ -33,6 +33,16 @@ export function PendingChanges() {
                   {e.worldSettingChanged ? ", world setting" : ""})
                 </span>
               )}
+              {(e.kind === "inventory" || e.kind === "armSlots") && (
+                <span className="text-muted-foreground">
+                  ({e.from} → {e.to})
+                </span>
+              )}
+              {e.kind === "research" && (
+                <span className="text-muted-foreground">
+                  ({e.delta > 0 ? `+${e.delta}` : e.delta} net)
+                </span>
+              )}
               <button
                 aria-label="Remove from list"
                 className="text-muted-foreground hover:text-foreground"

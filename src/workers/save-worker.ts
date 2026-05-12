@@ -24,11 +24,31 @@ import {
   type PurityState,
 } from "@/lib/edits/purity";
 import {
-  listPlayers,
+  getSlotsState,
   setInventorySlots as applyInventorySlots,
-  type PlayerInventoryInfo,
+  setArmSlots as applyArmSlots,
+  type SlotsState,
 } from "@/lib/edits/inventory";
+import {
+  getResearchState as readResearchState,
+  setSchematicUnlocked as applySchematicUnlocked,
+  setBulkSchematicUnlocked as applyBulkSchematicUnlocked,
+} from "@/lib/edits/research";
 import type { PurityTarget } from "@/lib/parser/types";
+
+export type ResearchSnapshot = {
+  ready: boolean;
+  /** Class names of MAM schematics currently in mPurchasedSchematics. */
+  unlockedClassNames: string[];
+};
+
+const snapshotResearch = (save: SatisfactorySave): ResearchSnapshot => {
+  const s = readResearchState(save);
+  return {
+    ready: s.ready,
+    unlockedClassNames: [...s.unlockedClassNames],
+  };
+};
 
 export type SaveSummary = {
   name: string;
@@ -46,7 +66,8 @@ export type SaveSummary = {
 export type LoadResult = {
   summary: SaveSummary;
   purity: PurityState;
-  players: PlayerInventoryInfo[];
+  slots: SlotsState;
+  research: ResearchSnapshot;
 };
 
 let current: SatisfactorySave | null = null;
@@ -86,7 +107,8 @@ const api = {
     return {
       summary: summarize(save, fileName),
       purity: getPurityState(save),
-      players: listPlayers(save),
+      slots: getSlotsState(save),
+      research: snapshotResearch(save),
     };
   },
 
@@ -107,16 +129,40 @@ const api = {
     return getPurityState(requireSave());
   },
 
-  async getPlayers(): Promise<PlayerInventoryInfo[]> {
-    return listPlayers(requireSave());
+  async getSlots(): Promise<SlotsState> {
+    return getSlotsState(requireSave());
   },
 
-  async setInventorySlots(args: {
-    instanceName: string;
-    slots: number;
-  }): Promise<PlayerInventoryInfo[]> {
-    applyInventorySlots(requireSave(), args);
-    return listPlayers(requireSave());
+  async setInventorySlots(slots: number): Promise<SlotsState> {
+    applyInventorySlots(requireSave(), slots);
+    return getSlotsState(requireSave());
+  },
+
+  async setArmSlots(slots: number): Promise<SlotsState> {
+    applyArmSlots(requireSave(), slots);
+    return getSlotsState(requireSave());
+  },
+
+  async getResearch(): Promise<ResearchSnapshot> {
+    return snapshotResearch(requireSave());
+  },
+
+  async setSchematicUnlocked(args: {
+    className: string;
+    unlocked: boolean;
+  }): Promise<{ research: ResearchSnapshot; slots: SlotsState }> {
+    const save = requireSave();
+    applySchematicUnlocked(save, args);
+    return { research: snapshotResearch(save), slots: getSlotsState(save) };
+  },
+
+  async setBulkSchematicUnlocked(
+    unlocked: boolean,
+    classNames: string[]
+  ): Promise<{ research: ResearchSnapshot; slots: SlotsState }> {
+    const save = requireSave();
+    applyBulkSchematicUnlocked(save, unlocked, classNames);
+    return { research: snapshotResearch(save), slots: getSlotsState(save) };
   },
 
   /**
@@ -127,7 +173,8 @@ const api = {
    */
   async verifyRoundTrip(): Promise<{
     purity: PurityState;
-    players: PlayerInventoryInfo[];
+    slots: SlotsState;
+    research: ResearchSnapshot;
     bytes: number;
   }> {
     const save = requireSave();
@@ -135,7 +182,8 @@ const api = {
     const reparsed = parseSave(originalFileName, out.buffer);
     return {
       purity: getPurityState(reparsed),
-      players: listPlayers(reparsed),
+      slots: getSlotsState(reparsed),
+      research: snapshotResearch(reparsed),
       bytes: out.byteLength,
     };
   },

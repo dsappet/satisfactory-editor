@@ -6,6 +6,8 @@
     "dev": "bun run build:worker && next dev",
     "build": "bun run build:worker && next build",
     "build:worker": "bun scripts/build-worker.ts",
+    "build:docs": "bun scripts/build-docs.ts",
+    "download:icons": "bun scripts/download-icons.ts",
     "start": "next start",
     "lint": "eslint",
     "test": "jest",

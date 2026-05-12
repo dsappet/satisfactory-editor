@@ -1,4 +1,5 @@
 import { ThemeToggle } from "@/components/theme-toggle";
+import { EventFilterToggle } from "@/components/event-filter-toggle";
 
 /**
  * Inline-SVG hero. Self-contained, no external assets.
@@ -166,7 +167,8 @@ export function Hero() {
           </p>
         </div>
 
-        <div className="shrink-0">
+        <div className="shrink-0 flex items-center gap-1">
+          <EventFilterToggle />
           <ThemeToggle />
         </div>
       </div>
