@@ -26,7 +26,7 @@ const treeKeyFromPath = (path: string | undefined): string => {
 };
 
 // Hardcoded display names — the game's research trees aren't exported in
-// Docs.json so we can't pull them dynamically.
+// the docs JSON, so we can't pull them dynamically.
 const TREE_LABELS: Record<string, string> = {
   AlienOrganisms: "Alien Organisms",
   AlienTech: "Alien Tech",

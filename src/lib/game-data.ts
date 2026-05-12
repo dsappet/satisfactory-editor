@@ -1,9 +1,11 @@
 /**
- * Static accessor for the parsed Docs.json. Regenerate via
- * `bun run build:docs` after dropping a fresh Docs.json into /data/.
+ * Static accessor for the parsed game docs. Regenerate via
+ * `bun run build:docs` after dropping a fresh `en-US.json` (or
+ * `docs_v<maj>-<min>.json`) into `/data/`.
  *
- * The JSON is checked into the repo so the app builds without the raw 10+ MB
- * Docs.json being present (the raw file is gitignored).
+ * The JSON in this directory is checked into the repo so the app builds
+ * without the raw 10+ MB localized docs file being present (the raw file
+ * is gitignored).
  */
 import raw from "@/data/game-data.json";
 
@@ -17,7 +19,7 @@ export type GameItem = {
   sinkPoints: number;
   stackSize: string;
   isFluid: boolean;
-  /** Icon asset basename pulled from Docs.json, e.g. "IconDesc_IronPlates_256". */
+  /** Icon asset basename pulled from the game docs, e.g. "IconDesc_IronPlates_256". */
   icon: string;
   /** Limited-time event tag (FICSMAS). Undefined for base-game items. */
   event?: GameEvent;

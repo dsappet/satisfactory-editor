@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { itemIconUrl, schematicIconUrl, gameData } from "@/lib/game-data";
 
@@ -70,15 +71,16 @@ function CdnImage({
       />
     );
   }
+  // Source PNGs are 256×256; next/image resizes/serves the right size + format
+  // (webp/avif when the browser supports it). title= renders a native tooltip
+  // — Next's <Image> accepts it via the DOM passthrough.
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
+    <Image
       src={src}
       alt={alt}
       title={title ?? alt}
       width={size}
       height={size}
-      loading="lazy"
       onError={() => setErrored(true)}
       className={cn("inline-block shrink-0", className)}
       style={{ width: size, height: size }}

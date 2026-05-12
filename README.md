@@ -1,8 +1,8 @@
 # Satisfactory save editor
 
 In-browser editor for Satisfactory 1.2 save files. Parses, edits (purity,
-inventory & hand slots, MAM data lookups), and re-serializes saves entirely
-client-side — files never leave your machine.
+inventory & hand slots, MAM research, hard-drive alternates), and
+re-serializes saves entirely client-side — files never leave your machine.
 
 ## Getting started
 
@@ -13,53 +13,69 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Gotcha: changes to the save worker do NOT hot-reload
+No further setup needed for normal development — the parsed game data and
+icons are checked into the repo. See [Files not in the repo](#files-not-in-the-repo)
+below for what you only need to grab when working on the data pipeline or
+the smoke-test scripts.
 
-The save parser runs in a Web Worker that is **pre-bundled** to
-`public/save-worker.js` (because Next/Turbopack with `output: 'export'` can't
-bundle `new Worker(new URL(..., import.meta.url))` for static export). The
-`dev` script rebuilds the worker once at startup, but `next dev`'s hot-reload
-does not watch worker source files.
+## Files not in the repo
 
-If you edit any of these and don't see your changes:
+A few inputs are deliberately gitignored. None of them are required for
+`bun dev` to work, but each is needed for a specific contributor task. The
+artifacts they produce **are** checked in.
 
-- `src/workers/save-worker.ts`
-- `src/lib/edits/*`
-- `src/lib/parser/*`
-- anything else imported by the worker
+| Path | Used by | When you need to provide it |
+|---|---|---|
+| `data/en-US.json` (or `data/docs_v<maj>-<min>.json`) | `bun run build:docs` | Only when refreshing game data for a new patch. See [Updating game data](#updating-game-data-mam-items-recipes-for-a-new-patch). |
+| `test/*.sav` | `scripts/test-mam-roundtrip.ts`, `scripts/test-alt-roundtrip.ts`, `scripts/dump-*.ts` | Only when running the round-trip smoke tests or inspecting a real save's properties. Drop any 1.2 `.sav` into `test/`; the scripts default to `test/dune.sav`, override with `bun run scripts/test-mam-roundtrip.ts test/your.sav`. |
 
-…you need to rebuild the worker bundle and refresh the browser. Either:
+What's already in the repo so you don't have to fetch it:
 
-```bash
-# in a second terminal, while `bun dev` is running
-bun run build:worker
-# then hard-refresh the browser tab (Cmd-Shift-R)
+- `src/data/game-data.json` — parsed items, schematics, recipes for 1.2.
+- `public/icons/` — 339 item/schematic PNGs mirrored from SCIM.
+- The pre-built worker is **not** committed — Turbopack rebuilds it from
+  `src/workers/save-worker.ts` on every build.
+
+## The save worker
+
+The save parser runs in a Web Worker, instantiated as:
+
+```ts
+new Worker(new URL("../workers/save-worker.ts", import.meta.url), { type: "module" })
 ```
 
-…or restart `bun dev` entirely.
+Turbopack picks this pattern up at build time, emits the worker as its own
+chunk under `/_next/static/chunks/…`, and rewrites the URL inline. The worker
+hot-reloads alongside the rest of the app in `next dev`; in production it's
+a content-hashed static asset like any other bundle. There's no separate
+build step.
 
-Symptom of a stale worker: a tab renders blank, or `Comlink` throws a "method
-not found" error in the console because the worker bundle is from before you
-added the method.
+If you edit worker code (`src/workers/save-worker.ts` or anything it imports
+from `src/lib/parser/*` / `src/lib/edits/*`) and don't see your changes,
+hard-refresh the browser tab (Cmd-Shift-R) so the new chunk is fetched.
 
 ## Updating game data (MAM, items, recipes) for a new patch
 
-The MAM Research tab and any future item/recipe-aware UI read from
-`src/data/game-data.json`, which is a slimmed-down parse of the game's
-`Docs.json`. The raw `Docs.json` is large (10+ MB, UTF-16) and is gitignored;
-the parsed JSON is checked in so the app builds without it.
+The MAM Research and Hard Drives tabs read from `src/data/game-data.json`,
+which is a slimmed-down parse of the localized docs file Coffee Stain ships
+with the game. In 1.0+ that file is `en-US.json` (UTF-16 LE, 10+ MB) —
+pre-1.0 it was named `Docs.json`. The raw file is gitignored; the parsed
+JSON is checked in so the app builds without it.
 
 **To pull in a new game version:**
 
-1. Find `Docs.json` in your Satisfactory install:
-   - Steam: `<SteamLibrary>/steamapps/common/Satisfactory/CommunityResources/Docs/Docs.json`
-   - Epic: `<EpicGames>/Satisfactory/CommunityResources/Docs/Docs.json`
-2. Copy it to `data/` in this repo with a version-tagged name:
+1. Find `en-US.json` in your Satisfactory install:
+   - Steam: `<SteamLibrary>/steamapps/common/Satisfactory/CommunityResources/Docs/en-US.json`
+   - Epic: `<EpicGames>/Satisfactory/CommunityResources/Docs/en-US.json`
+2. Copy it to `data/` in this repo. Either filename works:
    ```
-   data/docs_v1-2.json
+   data/en-US.json                 # straight from the game install
+   data/docs_v1-2.json             # version-tagged, lets you keep multiple side-by-side
    ```
-   Filename convention: `docs_v<major>-<minor>.json`. Multiple files may
-   coexist; `build:docs` picks the highest version.
+   When multiple files are present, names with a `v<major>-<minor>` tag win
+   over plain locale-coded names. Other locales (`de-DE.json`, `fr-FR.json`,
+   …) are accepted but the English file is what the parser is tested
+   against.
 3. Run the parser:
    ```bash
    bun run build:docs
@@ -68,7 +84,7 @@ the parsed JSON is checked in so the app builds without it.
    stays local (gitignored).
 
 The build is **not** wired into `bun dev` or `bun build` — it only runs when
-you explicitly invoke it, because the raw `Docs.json` isn't required for
+you explicitly invoke it, because the raw docs file isn't required for
 normal development.
 
 ### Updating icons
@@ -90,17 +106,72 @@ initials box. If you want better coverage you can extract the missing icons
 locally from your game install with UModel and drop them in by hand using
 the same naming convention (`<basename>_256.png`).
 
+## Smoke-test scripts
+
+Helpers under `scripts/` that load a real save, apply an edit, serialize,
+re-parse, and compare. They expect a save at `test/<name>.sav` (gitignored).
+
+| Script | What it does |
+|---|---|
+| `bun run scripts/test-mam-roundtrip.ts [path]` | Unlocks an MAM research, round-trips, prints state before and after. |
+| `bun run scripts/test-alt-roundtrip.ts [path]` | Same for a hard-drive alternate plus a slot-upgrade alt. |
+| `bun run scripts/dump-slots.ts [path]` | Prints the unlock subsystem's slot counters + every player's observed inventory count. |
+| `bun run scripts/dump-research.ts [path]` | Dumps `SchematicManager` / `ResearchManager` / `UnlockSubsystem` array properties (purchased schematics, unlocked trees, etc.). |
+
+These were the empirical tools that drove the design — keeping them around
+makes the next round of data spelunking (e.g. for milestones or game-phase
+edits) much cheaper.
+
 ## Scripts
 
 | Script | What it does |
 |---|---|
-| `bun dev` | Rebuilds the worker, starts `next dev`. |
-| `bun run build` | Rebuilds the worker, runs `next build`. |
-| `bun run build:worker` | Re-bundles `src/workers/save-worker.ts` → `public/save-worker.js`. |
-| `bun run build:docs` | Re-parses `data/docs_v*.json` → `src/data/game-data.json`. |
+| `bun dev` | Starts `next dev`. |
+| `bun run build` | `next build`. |
+| `bun run start` | Starts the production server after `bun run build`. |
+| `bun run build:docs` | Parses `data/en-US.json` (or `data/docs_v*.json`) → `src/data/game-data.json`. |
 | `bun run download:icons` | Mirrors any new icons referenced by `game-data.json` from SCIM into `public/icons/`. |
 | `bun test` | Runs the Jest suite (parser/edit lock-down tests). |
 | `bun run lint` | ESLint. |
+
+## Deploying to a VPS
+
+The app runs as a regular Next.js server (no static export). Image
+optimization, lazy loading, and the standard Next runtime all apply.
+
+```bash
+# On the build host (or the VPS itself if you build there):
+bun install
+bun run build
+bun run start            # boots next on port 3000 by default
+# or:
+PORT=8080 bun run start
+```
+
+Behind a reverse proxy, point at `127.0.0.1:3000` (or your chosen port) and
+let Next handle compression / caching. A minimal nginx block:
+
+```nginx
+server {
+  listen 80;
+  server_name your.domain;
+  location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+```
+
+You do **not** need to re-run `build:docs` or `download:icons` on the VPS —
+both produce artifacts that are checked into the repo
+(`src/data/game-data.json` and `public/icons/`). A plain `bun run build`
+is enough.
+
+The app has no backend — all save parsing happens in the user's browser
+via a Web Worker. Next is here for the asset pipeline, image optimization,
+and a stable URL surface, not for server-side compute.
 
 ## What's editable today
 
@@ -109,9 +180,9 @@ the same naming convention (`<basename>_256.png`).
 - **Inventory & hand slots** — `mNumTotalInventorySlots` and
   `mNumTotalArmEquipmentSlots` on `BP_UnlockSubsystem_C`, plus per-player
   `mNumObservedInventorySlots` mirror writes on every `BP_PlayerState_C`.
-
-## What's read-only
-
-- **MAM Research** tab — lists all MAM schematics with cost and what they
-  unlock. The save-side edit (flipping entries in `BP_ResearchManager_C`) is
-  the next milestone.
+- **MAM Research** — every `EST_MAM` schematic, per-row checkbox or bulk
+  unlock/lock. Writes to `SchematicManager.mPurchasedSchematics`, ensures the
+  parent tree is in `ResearchManager.mUnlockedResearchTrees`, and applies the
+  schematic's unlock effects to `UnlockSubsystem` (slot counts, panel toggles).
+- **Hard Drive alternates** — every `EST_Alternate` schematic, grouped by the
+  item they produce. Same write path as MAM (no research tree to update).

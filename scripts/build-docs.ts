@@ -1,14 +1,21 @@
 #!/usr/bin/env bun
 /**
- * Parses the game's Docs.json into a slim, app-shaped JSON for static import.
- * Re-run when a new patch lands.
+ * Parses the game's localized docs JSON into a slim, app-shaped JSON for
+ * static import. Re-run when a new patch lands.
  *
- *   1. Drop a fresh Docs.json into /data/ (filename: docs_v<maj>-<min>.json).
+ *   1. Drop a fresh file into /data/. Coffee Stain ships it as
+ *      `<game-install>/CommunityResources/Docs/en-US.json` (UTF-16 LE).
+ *      Keep that name, or rename to `docs_v<maj>-<min>.json` to keep
+ *      multiple game versions side by side — both patterns are accepted.
  *   2. `bun run build:docs`
  *
- * Multiple files (docs_v1-1.json, docs_v1-2.json) can coexist; we pick the
- * highest version. The raw files are gitignored; the parsed JSON in
- * src/data/game-data.json is checked in.
+ * Multiple files can coexist (e.g. docs_v1-1.json, docs_v1-2.json, en-US.json)
+ * — names embedding a `v<major>-<minor>` tag win; otherwise we just use
+ * whichever sorts last. The raw files are gitignored; the parsed JSON
+ * (src/data/game-data.json) IS checked in.
+ *
+ * Pre-1.0 the file was named `Docs.json` (English-only). The renamed
+ * `en-US.json` variant is what shows up in 1.0+ installs.
  *
  * NOTE: We deliberately avoid `satisfactory-docs-parser` (v7.0.1 chokes on a
  * handful of new 1.2 recipes and the failure modes are noisy). The data we
@@ -24,13 +31,17 @@ const outDir = resolve(root, "src", "data");
 
 type DocsTopLevel = { NativeClass: string; Classes: Record<string, string>[] };
 
+// Accept the historical name (`docs*.json`) and the 1.0+ locale-coded
+// filenames (`en-US.json`, `de-DE.json`, …). New devs can drop the file
+// straight from their game install without renaming.
+const DOCS_FILE_RE = /^(docs.*|[a-z]{2}-[A-Z]{2}.*)\.json$/;
+
 const pickDocsFile = (): { path: string; version: string } => {
-  const entries = readdirSync(dataDir).filter((f) =>
-    /^docs.*\.json$/i.test(f)
-  );
+  const entries = readdirSync(dataDir).filter((f) => DOCS_FILE_RE.test(f));
   if (entries.length === 0) {
     console.error(
-      `No docs*.json files found in ${dataDir}. Drop a copy of Docs.json there.`
+      `No docs / locale-named JSON file found in ${dataDir}.\n` +
+        `Drop a copy of <game-install>/CommunityResources/Docs/en-US.json there.`
     );
     process.exit(1);
   }
@@ -136,7 +147,7 @@ type SlimItem = {
   event?: "FICSMAS";
 };
 
-// Items don't expose mRelevantEvents in Docs.json, but every FICSMAS item
+// Items don't expose mRelevantEvents in the docs JSON, but every FICSMAS item
 // follows a consistent class-name convention. Matching on class name avoids
 // false positives from base-game items whose display name happens to overlap.
 const FICSMAS_CLASS_PATTERNS = [

@@ -40,10 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Pre-bundled worker output (built from src/workers/save-worker.ts)
-/public/save-worker.js
-/public/save-worker.js.map
-
 # Raw game Docs.json files (large, owned by Coffee Stain). The parsed,
 # slimmed-down JSON in src/data/ is checked in instead.
 /data/*.json
