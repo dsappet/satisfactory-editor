@@ -48,6 +48,7 @@ function SlotPanel({
   vanilla,
 }: SlotPanelProps) {
   const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
   const current = draft ?? value;
   const dirty = draft !== null && draft !== value;
   const valid =
@@ -55,9 +56,12 @@ function SlotPanel({
 
   const handleApply = async () => {
     setBusy(true);
+    setError(null);
     try {
       await apply(current);
       setDraft(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -116,6 +120,12 @@ function SlotPanel({
           Apply
         </Button>
       </div>
+      {error && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive flex items-start gap-2">
+          <AlertTriangle className="size-3.5 mt-0.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
     </div>
   );
 }

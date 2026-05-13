@@ -75,6 +75,12 @@ export interface SaveState {
   /** Class names of MAM schematics unlocked at file-load time. Used to compute
    *  the "net delta" of staged research edits. */
   researchBaseline: Set<string>;
+  /** Inventory slot count at file-load time. Used as the "from" of staged
+   *  inventory edits so the label reflects the original value, and to decide
+   *  whether the edit collapses to a no-op (applied === baseline → drop it). */
+  inventoryBaseline: number | null;
+  /** Hand slot count at file-load time. Same role as inventoryBaseline. */
+  armSlotsBaseline: number | null;
   staged: StagedEdit[];
   verification: DownloadVerification;
 
@@ -157,6 +163,8 @@ export const useSaveStore = create<SaveState>((set, get) => ({
   slots: null,
   research: null,
   researchBaseline: new Set(),
+  inventoryBaseline: null,
+  armSlotsBaseline: null,
   staged: [],
   verification: { state: "idle" },
 
@@ -172,6 +180,8 @@ export const useSaveStore = create<SaveState>((set, get) => ({
       slots: null,
       research: null,
       researchBaseline: new Set(),
+      inventoryBaseline: null,
+      armSlotsBaseline: null,
       staged: [],
       verification: { state: "idle" },
     });
@@ -209,6 +219,8 @@ export const useSaveStore = create<SaveState>((set, get) => ({
         slots: result.slots,
         research: result.research,
         researchBaseline: new Set(result.research.unlockedClassNames),
+        inventoryBaseline: result.slots.inventorySlots,
+        armSlotsBaseline: result.slots.armSlots,
       });
       if (file.size > SIZE_WARN_BYTES) {
         // Just log; UI can also surface the size.
@@ -240,6 +252,8 @@ export const useSaveStore = create<SaveState>((set, get) => ({
       slots: null,
       research: null,
       researchBaseline: new Set(),
+      inventoryBaseline: null,
+      armSlotsBaseline: null,
       staged: [],
       verification: { state: "idle" },
       errorMessage: null,
@@ -279,21 +293,30 @@ export const useSaveStore = create<SaveState>((set, get) => ({
     const before = get().slots;
     if (!before) throw new Error("No save loaded.");
     const next = await api.setInventorySlots(slots);
-    const edit: StagedEdit = {
-      id: newId(),
-      kind: "inventory",
-      label: `Inventory slots: ${before.inventorySlots} → ${slots}`,
-      from: before.inventorySlots,
-      to: slots,
-    };
-    set((s) => ({
-      slots: next,
-      staged: [
-        ...s.staged.filter((e) => e.kind !== "inventory"),
-        edit,
-      ],
-      verification: { state: "idle" },
-    }));
+    set((s) => {
+      const baseline = s.inventoryBaseline ?? before.inventorySlots;
+      const otherEdits = s.staged.filter((e) => e.kind !== "inventory");
+      // No net change vs. the file's original value → drop the staged edit.
+      if (slots === baseline) {
+        return {
+          slots: next,
+          staged: otherEdits,
+          verification: { state: "idle" },
+        };
+      }
+      const edit: StagedEdit = {
+        id: newId(),
+        kind: "inventory",
+        label: `Inventory slots: ${baseline} → ${slots}`,
+        from: baseline,
+        to: slots,
+      };
+      return {
+        slots: next,
+        staged: [...otherEdits, edit],
+        verification: { state: "idle" },
+      };
+    });
   },
 
   async stageArmSlots(slots) {
@@ -301,21 +324,29 @@ export const useSaveStore = create<SaveState>((set, get) => ({
     const before = get().slots;
     if (!before) throw new Error("No save loaded.");
     const next = await api.setArmSlots(slots);
-    const edit: StagedEdit = {
-      id: newId(),
-      kind: "armSlots",
-      label: `Hand slots: ${before.armSlots} → ${slots}`,
-      from: before.armSlots,
-      to: slots,
-    };
-    set((s) => ({
-      slots: next,
-      staged: [
-        ...s.staged.filter((e) => e.kind !== "armSlots"),
-        edit,
-      ],
-      verification: { state: "idle" },
-    }));
+    set((s) => {
+      const baseline = s.armSlotsBaseline ?? before.armSlots;
+      const otherEdits = s.staged.filter((e) => e.kind !== "armSlots");
+      if (slots === baseline) {
+        return {
+          slots: next,
+          staged: otherEdits,
+          verification: { state: "idle" },
+        };
+      }
+      const edit: StagedEdit = {
+        id: newId(),
+        kind: "armSlots",
+        label: `Hand slots: ${baseline} → ${slots}`,
+        from: baseline,
+        to: slots,
+      };
+      return {
+        slots: next,
+        staged: [...otherEdits, edit],
+        verification: { state: "idle" },
+      };
+    });
   },
 
   async stageSchematicUnlocked(className, unlocked) {
