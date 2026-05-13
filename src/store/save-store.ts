@@ -185,18 +185,24 @@ export const useSaveStore = create<SaveState>((set, get) => ({
       staged: [],
       verification: { state: "idle" },
     });
-    try {
-      const { api, worker } = getSaveWorker();
+    const { api, worker } = getSaveWorker();
 
-      // Hook unhandled worker errors.
-      const onError = (e: ErrorEvent) => {
+    // Hook unhandled worker errors. Scoped to this load via AbortController
+    // so we (a) clean up unconditionally, and (b) don't leave a `{ once: true }`
+    // listener that a later benign error could consume before the next parse.
+    const ac = new AbortController();
+    worker.addEventListener(
+      "error",
+      (e) => {
         set({
           loading: false,
-          errorMessage: `Worker error: ${e.message ?? "unknown"}`,
+          errorMessage: `Worker error: ${(e as ErrorEvent).message ?? "unknown"}`,
         });
-      };
-      worker.addEventListener("error", onError, { once: true });
+      },
+      { signal: ac.signal }
+    );
 
+    try {
       const buf = await file.arrayBuffer();
       const Comlink = await import("comlink");
       const proxyProgress = Comlink.proxy(
@@ -209,7 +215,6 @@ export const useSaveStore = create<SaveState>((set, get) => ({
         file.name,
         proxyProgress
       );
-      worker.removeEventListener("error", onError);
       set({
         loading: false,
         loadProgress: 1,
@@ -236,6 +241,8 @@ export const useSaveStore = create<SaveState>((set, get) => ({
             ? err.message
             : "Failed to load save (unknown error).",
       });
+    } finally {
+      ac.abort();
     }
   },
 

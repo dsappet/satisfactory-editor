@@ -51,3 +51,7 @@ next-env.d.ts
 
 # Stale binary Bun lockfile — bun.lock (text) is the source of truth.
 bun.lockb
+
+# Local Claude Code state (per-developer permissions, transcripts, settings).
+# Untracked today but explicitly ignored so a `git add -A` can't leak it.
+/.claude/
