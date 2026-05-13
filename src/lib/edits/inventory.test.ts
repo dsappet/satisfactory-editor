@@ -10,6 +10,7 @@ import {
   setInventorySlots,
   PLAYER_STATE_TYPE_PATH,
   UNLOCK_SUBSYSTEM_TYPE_PATH,
+  CHAR_PLAYER_TYPE_PATH,
   VANILLA_ARM_SLOTS,
   VANILLA_INVENTORY_SLOTS,
 } from "./inventory";
@@ -20,6 +21,76 @@ const intProp = (name: string, value: number) => ({
   name,
   propertyTagType: { name: "IntProperty", children: [] },
   value,
+});
+
+const objRefProp = (name: string, pathName: string) => ({
+  type: "ObjectProperty",
+  name,
+  propertyTagType: { name: "ObjectProperty", children: [] },
+  value: { levelName: "", pathName },
+});
+
+const emptyStack = () => ({
+  type: "InventoryStack",
+  properties: {
+    Item: {
+      type: "StructProperty",
+      name: "Item",
+      propertyTagType: {
+        name: "StructProperty",
+        children: [{ name: "InventoryItem", children: [] }],
+      },
+      value: {
+        itemReference: { levelName: "", pathName: "" },
+        itemState: { hasValidStruct: false },
+      },
+    },
+    NumItems: {
+      type: "IntProperty",
+      name: "NumItems",
+      propertyTagType: { name: "IntProperty", children: [] },
+      value: 0,
+    },
+  },
+});
+
+const itemStack = (itemPath: string, count: number) => ({
+  type: "InventoryStack",
+  properties: {
+    Item: {
+      type: "StructProperty",
+      name: "Item",
+      propertyTagType: {
+        name: "StructProperty",
+        children: [{ name: "InventoryItem", children: [] }],
+      },
+      value: {
+        itemReference: { levelName: "", pathName: itemPath },
+        itemState: { hasValidStruct: false },
+      },
+    },
+    NumItems: {
+      type: "IntProperty",
+      name: "NumItems",
+      propertyTagType: { name: "IntProperty", children: [] },
+      value: count,
+    },
+  },
+});
+
+const stackArrayProp = (values: ReturnType<typeof emptyStack>[]) => ({
+  type: "ArrayProperty",
+  name: "mInventoryStacks",
+  propertyTagType: {
+    name: "ArrayProperty",
+    children: [
+      {
+        name: "StructProperty",
+        children: [{ name: "InventoryStack", children: [] }],
+      },
+    ],
+  },
+  values,
 });
 
 const obj = (typePath: string, instanceName: string, properties: any = {}) => ({
@@ -40,9 +111,24 @@ const obj = (typePath: string, instanceName: string, properties: any = {}) => ({
   components: [],
 });
 
+type PlayerSpec = {
+  instanceName: string;
+  observedInv?: number | null;
+  /** When set, builds Char_Player_C + inventory components linked from the PS. */
+  character?: {
+    instanceName: string;
+    /** Items per inventory slot. Length determines the bag size. */
+    mainStacks?: Array<ReturnType<typeof emptyStack>>;
+    /** Items per arm slot. Length determines the hand-slot count. */
+    armsStacks?: Array<ReturnType<typeof emptyStack>>;
+    /** When set, attaches mArbitrarySlotSizes parallel array to mainInventory. */
+    arbitrarySlotSizes?: number[];
+  };
+};
+
 const makeSave = (opts: {
   unlock?: { inv?: number; arm?: number } | null;
-  players?: Array<{ instanceName: string; observedInv?: number | null }>;
+  players?: PlayerSpec[];
 }): SatisfactorySave => {
   const objects: any[] = [];
   if (opts.unlock !== null) {
@@ -68,14 +154,50 @@ const makeSave = (opts: {
     );
   }
   for (const p of opts.players ?? []) {
-    const props: any = {};
+    const psProps: any = {};
     if (p.observedInv !== undefined && p.observedInv !== null) {
-      props.mNumObservedInventorySlots = intProp(
+      psProps.mNumObservedInventorySlots = intProp(
         "mNumObservedInventorySlots",
         p.observedInv
       );
     }
-    objects.push(obj(PLAYER_STATE_TYPE_PATH, p.instanceName, props));
+    if (p.character) {
+      psProps.mOwnedPawn = objRefProp("mOwnedPawn", p.character.instanceName);
+
+      const mainInvPath = `${p.character.instanceName}.inventory`;
+      const armsPath = `${p.character.instanceName}.armsEquipment`;
+
+      const charProps: any = {
+        mInventory: objRefProp("mInventory", mainInvPath),
+        mArmsEquipmentSlot: objRefProp("mArmsEquipmentSlot", armsPath),
+      };
+      objects.push(
+        obj(CHAR_PLAYER_TYPE_PATH, p.character.instanceName, charProps)
+      );
+
+      const mainProps: any = {
+        mInventoryStacks: stackArrayProp(p.character.mainStacks ?? []),
+      };
+      if (p.character.arbitrarySlotSizes) {
+        mainProps.mArbitrarySlotSizes = {
+          type: "ArrayProperty",
+          name: "mArbitrarySlotSizes",
+          propertyTagType: {
+            name: "ArrayProperty",
+            children: [{ name: "IntProperty", children: [] }],
+          },
+          values: [...p.character.arbitrarySlotSizes],
+        };
+      }
+      objects.push(obj("FGInventoryComponent", mainInvPath, mainProps));
+
+      objects.push(
+        obj("FGInventoryComponent", armsPath, {
+          mInventoryStacks: stackArrayProp(p.character.armsStacks ?? []),
+        })
+      );
+    }
+    objects.push(obj(PLAYER_STATE_TYPE_PATH, p.instanceName, psProps));
   }
   return {
     name: "test.sav",
@@ -90,6 +212,28 @@ const makeSave = (opts: {
       },
     },
   } as unknown as SatisfactorySave;
+};
+
+const readStacks = (save: SatisfactorySave, instanceName: string): any[] => {
+  const lvl = Object.values(save.levels)[0];
+  const o = lvl.objects.find((x) => x.instanceName === instanceName);
+  if (!o) throw new Error(`No object ${instanceName}`);
+  const prop: any = o.properties?.["mInventoryStacks"];
+  const single = Array.isArray(prop) ? prop[0] : prop;
+  return single.values;
+};
+
+const readSlotSizes = (
+  save: SatisfactorySave,
+  instanceName: string
+): number[] | undefined => {
+  const lvl = Object.values(save.levels)[0];
+  const o = lvl.objects.find((x) => x.instanceName === instanceName);
+  if (!o) return undefined;
+  const prop: any = o.properties?.["mArbitrarySlotSizes"];
+  if (!prop) return undefined;
+  const single = Array.isArray(prop) ? prop[0] : prop;
+  return single.values;
 };
 
 const readUnlockProp = (save: SatisfactorySave, name: string) => {
@@ -213,5 +357,177 @@ describe("setArmSlots", () => {
     const save = makeSave({ unlock: { arm: 1 } });
     expect(() => setArmSlots(save, 0)).toThrow();
     expect(() => setArmSlots(save, 9999)).toThrow();
+  });
+});
+
+// These tests cover the actual bag-resize step. The unlock-budget value on
+// BP_UnlockSubsystem_C is bookkeeping — the in-game inventory size is the
+// length of mInventoryStacks on the player's FGInventoryComponent, and the
+// game does NOT auto-resize the bag from the unlock count on load. Without
+// these writes, the player loads in with their original 18 slots even when
+// the unlock budget says 50.
+describe("setInventorySlots — resizes the actual player bag", () => {
+  test("grows mInventoryStacks on the player's main inventory component", () => {
+    const save = makeSave({
+      unlock: { inv: 18 },
+      players: [
+        {
+          instanceName: "PS_1",
+          observedInv: 18,
+          character: {
+            instanceName: "Char_1",
+            mainStacks: new Array(18).fill(0).map(() => emptyStack()),
+            armsStacks: new Array(1).fill(0).map(() => emptyStack()),
+          },
+        },
+      ],
+    });
+    setInventorySlots(save, 50);
+    expect(readStacks(save, "Char_1.inventory")).toHaveLength(50);
+    // Arms inventory must NOT be touched by an inventory edit.
+    expect(readStacks(save, "Char_1.armsEquipment")).toHaveLength(1);
+  });
+
+  test("preserves existing items when growing the bag", () => {
+    const items = [
+      itemStack(
+        "/Game/FactoryGame/Resource/RawResources/OreIron/Desc_OreIron.Desc_OreIron_C",
+        50
+      ),
+      itemStack(
+        "/Game/FactoryGame/Resource/Parts/Cable/Desc_Cable.Desc_Cable_C",
+        7
+      ),
+      emptyStack(),
+    ];
+    const save = makeSave({
+      unlock: { inv: 18 },
+      players: [
+        {
+          instanceName: "PS_1",
+          observedInv: 18,
+          character: { instanceName: "Char_1", mainStacks: items },
+        },
+      ],
+    });
+    setInventorySlots(save, 30);
+    const stacks = readStacks(save, "Char_1.inventory");
+    expect(stacks).toHaveLength(30);
+    // First two slots keep their items, untouched.
+    expect(stacks[0].properties.NumItems.value).toBe(50);
+    expect(stacks[1].properties.NumItems.value).toBe(7);
+    // Trailing slots are the newly-padded empties.
+    expect(stacks[29].properties.NumItems.value).toBe(0);
+  });
+
+  test("shrinking only drops trailing EMPTY slots — refuses to destroy items", () => {
+    const stacks = [
+      itemStack(
+        "/Game/FactoryGame/Resource/Parts/Cable/Desc_Cable.Desc_Cable_C",
+        1
+      ),
+      emptyStack(),
+      itemStack(
+        "/Game/FactoryGame/Resource/Parts/Wire/Desc_Wire.Desc_Wire_C",
+        2
+      ),
+      emptyStack(),
+      emptyStack(),
+    ];
+    const save = makeSave({
+      unlock: { inv: 5 },
+      players: [
+        {
+          instanceName: "PS_1",
+          observedInv: 5,
+          character: { instanceName: "Char_1", mainStacks: stacks },
+        },
+      ],
+    });
+    // Asks for 2 slots, but slot index 2 holds Wire. We're allowed to drop
+    // the two trailing empties (down to 3) but NOT the Wire stack.
+    setInventorySlots(save, 2);
+    const out = readStacks(save, "Char_1.inventory");
+    expect(out).toHaveLength(3);
+    expect(out[0].properties.NumItems.value).toBe(1); // Cable kept
+    expect(out[2].properties.NumItems.value).toBe(2); // Wire kept
+  });
+
+  test("keeps mArbitrarySlotSizes parallel to mInventoryStacks when present", () => {
+    const save = makeSave({
+      unlock: { inv: 4 },
+      players: [
+        {
+          instanceName: "PS_1",
+          observedInv: 4,
+          character: {
+            instanceName: "Char_1",
+            mainStacks: new Array(4).fill(0).map(() => emptyStack()),
+            arbitrarySlotSizes: [100, 100, 100, 100],
+          },
+        },
+      ],
+    });
+    setInventorySlots(save, 7);
+    expect(readSlotSizes(save, "Char_1.inventory")).toEqual([
+      100, 100, 100, 100, 0, 0, 0,
+    ]);
+  });
+
+  test("is a no-op on inventory components when no character is linked", () => {
+    // E.g., a player who hasn't been in this session — only PlayerState exists.
+    const save = makeSave({
+      unlock: { inv: 18 },
+      players: [{ instanceName: "PS_1", observedInv: 18 }],
+    });
+    expect(() => setInventorySlots(save, 30)).not.toThrow();
+    expect(readUnlockProp(save, "mNumTotalInventorySlots")).toBe(30);
+    expect(readPlayerProp(save, "PS_1", "mNumObservedInventorySlots")).toBe(30);
+  });
+});
+
+describe("setArmSlots — resizes the actual hand-slot component", () => {
+  test("grows mInventoryStacks on the player's arms-equipment component", () => {
+    const save = makeSave({
+      unlock: { arm: 1 },
+      players: [
+        {
+          instanceName: "PS_1",
+          observedInv: 18,
+          character: {
+            instanceName: "Char_1",
+            mainStacks: new Array(18).fill(0).map(() => emptyStack()),
+            armsStacks: [emptyStack()],
+          },
+        },
+      ],
+    });
+    setArmSlots(save, 4);
+    expect(readStacks(save, "Char_1.armsEquipment")).toHaveLength(4);
+    // Main inventory must NOT be touched by an arm-slot edit.
+    expect(readStacks(save, "Char_1.inventory")).toHaveLength(18);
+  });
+
+  test("preserves equipped tools when growing the hand slots", () => {
+    const equipped = [
+      itemStack(
+        "/Game/FactoryGame/Equipment/Chainsaw/BP_EquipmentDescriptorChainsaw.BP_EquipmentDescriptorChainsaw_C",
+        1
+      ),
+    ];
+    const save = makeSave({
+      unlock: { arm: 1 },
+      players: [
+        {
+          instanceName: "PS_1",
+          character: { instanceName: "Char_1", armsStacks: equipped },
+        },
+      ],
+    });
+    setArmSlots(save, 6);
+    const stacks = readStacks(save, "Char_1.armsEquipment");
+    expect(stacks).toHaveLength(6);
+    expect(stacks[0].properties.NumItems.value).toBe(1);
+    expect(stacks[5].properties.NumItems.value).toBe(0);
   });
 });
