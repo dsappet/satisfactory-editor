@@ -1,5 +1,6 @@
 import { Parser } from "@etothepii/satisfactory-file-parser";
 import type { SatisfactorySave } from "@/lib/parser/types";
+import { sanitizeParsedSave } from "@/lib/parser/sanitize";
 
 export type ParseProgress = (progress: number, msg?: string) => void;
 
@@ -14,10 +15,12 @@ export function parseSave(
   onProgress?: ParseProgress
 ): SatisfactorySave {
   try {
-    return Parser.ParseSave(name, bytes, {
+    const save = Parser.ParseSave(name, bytes, {
       onProgressCallback: onProgress,
       throwErrors: false,
     });
+    sanitizeParsedSave(save);
+    return save;
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(
