@@ -2,6 +2,7 @@
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FilePicker, PageDropTarget } from "@/components/file-picker";
+import { SaveFileFinder } from "@/components/save-file-finder";
 import { SaveSummary } from "@/components/save-summary";
 import { PurityTab } from "@/components/purity-tab";
 import { InventoryTab } from "@/components/inventory-tab";
@@ -23,7 +24,12 @@ export default function Home() {
 
         <PrivacyBanner />
 
-        {!summary && <FilePicker />}
+        {!summary && (
+          <>
+            <FilePicker />
+            <SaveFileFinder />
+          </>
+        )}
 
         {summary && (
           <>
