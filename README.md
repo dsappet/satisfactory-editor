@@ -90,21 +90,33 @@ normal development.
 ### Updating icons
 
 Item and schematic icons are mirrored from satisfactory-calculator.com (SCIM)
-into `public/icons/` and committed to the repo. Mirroring sidesteps SCIM's
-hotlink CORS block and makes the app work offline.
+into `public/icons/` and **committed to the repo**. Mirroring sidesteps
+SCIM's hotlink CORS block and makes the app work offline.
+
+> **Manual-only.** `bun run download:icons` reaches out to a third-party
+> host and writes the bytes into the repo. **Never wire it into CI or any
+> automated build** — the script refuses to run when `CI` (or any common
+> CI flag) is set. The runtime app reads from the committed
+> `public/icons/`, so the build doesn't depend on this script. Run it
+> manually after a `build:docs` refresh, then **diff `public/icons/` by
+> eye** before committing.
 
 After regenerating `game-data.json` for a new patch:
 
 ```bash
 bun run download:icons
+git status public/icons/      # review the new files before committing
 ```
 
 The script is idempotent — it only fetches basenames that aren't already in
-`public/icons/`. Failures (typically 404s for new 1.2-only icons SCIM hasn't
-caught up to) are logged and the `<ItemIcon>` component falls back to an
-initials box. If you want better coverage you can extract the missing icons
-locally from your game install with UModel and drop them in by hand using
-the same naming convention (`<basename>_256.png`).
+`public/icons/`. Each downloaded file is checked for the PNG magic header
+and rejected if it doesn't match (cheap protection against the CDN returning
+an HTML error page; not a defense against a determined supply-chain attack).
+Failures (typically 404s for new 1.2-only icons SCIM hasn't caught up to)
+are logged and the `<ItemIcon>` component falls back to an initials box. If
+you want better coverage you can extract the missing icons locally from
+your game install with UModel and drop them in by hand using the same
+naming convention (`<basename>_256.png`).
 
 ## Smoke-test scripts
 
@@ -153,8 +165,11 @@ let Next handle compression / caching. A minimal nginx block:
 
 ```nginx
 server {
-  listen 80;
+  listen 443 ssl http2;
   server_name your.domain;
+  ssl_certificate     /etc/letsencrypt/live/your.domain/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/your.domain/privkey.pem;
+
   location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_set_header Host $host;
@@ -162,7 +177,26 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
   }
 }
+
+server {
+  listen 80;
+  server_name your.domain;
+  return 301 https://$host$request_uri;
+}
 ```
+
+**Serve over HTTPS.** The privacy claim ("save never leaves your browser")
+depends on the user receiving an unmodified JS bundle. Without TLS, a network
+attacker between the user and your server can swap the bundle for one that
+silently uploads saves, and CSP can't save you from that. Use Let's Encrypt
+(`certbot --nginx`) or a host that terminates TLS for you (Caddy, Cloudflare,
+Vercel, Fly, etc.). Don't run this app on plain HTTP for users you don't
+trust to be on a trusted network.
+
+The app sends a strict CSP (see [`next.config.ts`](./next.config.ts)) that
+disallows outbound connections to anywhere but the same origin — auditors
+can verify the privacy claim from their browser's devtools without reading
+the source.
 
 You do **not** need to re-run `build:docs` or `download:icons` on the VPS —
 both produce artifacts that are checked into the repo

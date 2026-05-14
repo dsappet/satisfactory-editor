@@ -2,17 +2,49 @@
 /**
  * Mirror all icons referenced by src/data/game-data.json into public/icons/.
  *
- * Why: SCIM's CDN blocks browser hotlinking via CORS. Serving the same files
- * from /public/icons sidesteps that and removes the runtime dependency on a
- * third-party host.
+ * !!! MANUAL-ONLY. DO NOT RUN FROM CI / AUTOMATION. !!!
  *
- * Idempotent — skips files already present. Re-run after `bun run build:docs`
- * if a new patch introduced new items.
+ * Rationale: this script reaches out to a third-party host
+ * (static.satisfactory-calculator.com) and writes the bytes into the repo.
+ * If that host were ever compromised the bytes could be poisoned PNGs. The
+ * mitigations are (a) a human reviews the resulting `public/icons/` diff in
+ * a PR before it lands, and (b) the icons are checked into the repo so the
+ * runtime app never depends on this script. Running it from CI would defeat
+ * (a) — never wire this into a build/release pipeline.
  *
- *   bun run download:icons
+ * To refresh icons:
+ *   1. `bun run build:docs`           (regenerates src/data/game-data.json)
+ *   2. `bun run download:icons`       (manual; this script)
+ *   3. Review the `public/icons/` diff visually before committing.
+ *
+ * Idempotent — skips files already present. PNG magic bytes are validated
+ * on each downloaded file as a basic sanity check (does not protect against
+ * a determined attacker who serves valid-but-malicious PNGs).
  */
-import { mkdirSync, existsSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+
+// Refuse to run unattended. CI environments universally set CI=true; the
+// other common ones (GitHub Actions, GitLab, CircleCI, etc.) set their own
+// flags too. If you're hitting this by mistake locally, unset CI.
+const CI_ENV_FLAGS = [
+  "CI",
+  "GITHUB_ACTIONS",
+  "GITLAB_CI",
+  "CIRCLECI",
+  "BUILDKITE",
+  "JENKINS_URL",
+  "TF_BUILD",
+];
+const ciHit = CI_ENV_FLAGS.find((k) => process.env[k]);
+if (ciHit) {
+  console.error(
+    `Refusing to run: ${ciHit} is set. download-icons is a manual-only ` +
+      `script — the committed files under public/icons/ are the runtime ` +
+      `source of truth. See the comment at the top of this file.`
+  );
+  process.exit(1);
+}
 
 const root = resolve(import.meta.dirname, "..");
 const outDir = resolve(root, "public", "icons");
@@ -61,7 +93,29 @@ let ok = 0;
 let missing = 0;
 const fails: string[] = [];
 
+// PNG magic header: 89 50 4E 47 0D 0A 1A 0A. Cheap sanity check that the
+// server didn't return an HTML error page or a stub.
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const isPng = (bytes: Uint8Array): boolean => {
+  if (bytes.length < PNG_MAGIC.length) return false;
+  for (let i = 0; i < PNG_MAGIC.length; i++) {
+    if (bytes[i] !== PNG_MAGIC[i]) return false;
+  }
+  return true;
+};
+
+// Defensive basename guard. Inputs come from our own game-data.json, but
+// keep this paranoid — any "/" or ".." would let a poisoned data file write
+// outside public/icons/.
+const isSafeBasename = (basename: string): boolean =>
+  /^[A-Za-z0-9_-]+$/.test(basename);
+
 const downloadOne = async (basename: string): Promise<void> => {
+  if (!isSafeBasename(basename)) {
+    missing += 1;
+    fails.push(`${basename} (rejected: unsafe characters in basename)`);
+    return;
+  }
   const url = `${SCIM_BASE}/${basename}.png`;
   try {
     const res = await fetch(url, {
@@ -76,6 +130,15 @@ const downloadOne = async (basename: string): Promise<void> => {
     if (bytes.length < 32) {
       missing += 1;
       fails.push(`${basename} (empty body, ${bytes.length} bytes)`);
+      return;
+    }
+    if (!isPng(bytes)) {
+      missing += 1;
+      fails.push(
+        `${basename} (not a PNG — first bytes: ${[...bytes.slice(0, 8)]
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join(" ")})`
+      );
       return;
     }
     writeFileSync(resolve(outDir, `${basename}.png`), bytes);
