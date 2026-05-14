@@ -40,6 +40,20 @@ function primaryProductFor(s: Schematic): string | null {
   return r.products[0]?.className ?? null;
 }
 
+/** The non-alternate recipes that produce `itemClass` as their primary
+ *  product. Used as the baseline that alternates are compared against.
+ *  Excludes `Unpackage*` recipes — those convert canister-form back to
+ *  fluid and aren't a meaningful "original" for the comparison. */
+function baseRecipesFor(itemClass: string): string[] {
+  const out: string[] = [];
+  for (const [cls, r] of Object.entries(gameData.recipes)) {
+    if (cls.includes("Alternate")) continue;
+    if (cls.includes("Unpackage")) continue;
+    if (r.products[0]?.className === itemClass) out.push(cls);
+  }
+  return out;
+}
+
 const OTHER_GROUP_KEY = "__other__";
 
 type Group = {
@@ -325,6 +339,7 @@ export function HardDriveTab() {
         const groupUnlocked = g.rows.filter((s) =>
           unlocked.has(s.className)
         ).length;
+        const baseRecipes = g.itemClass ? baseRecipesFor(g.itemClass) : [];
         return (
           <Card key={g.key}>
             <CardHeader className="pb-2">
@@ -339,6 +354,16 @@ export function HardDriveTab() {
                   {groupUnlocked} / {g.rows.length}
                 </Badge>
               </CardTitle>
+              {baseRecipes.length > 0 && (
+                <div className="mt-2 space-y-1 border-l-2 border-muted pl-3">
+                  <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+                    {baseRecipes.length > 1 ? "Original recipes" : "Original recipe"}
+                  </div>
+                  {baseRecipes.map((rc) => (
+                    <RecipeIO key={rc} recipeClass={rc} />
+                  ))}
+                </div>
+              )}
             </CardHeader>
             <CardContent className="space-y-2 pt-4">
               {g.rows.map((s) => (
