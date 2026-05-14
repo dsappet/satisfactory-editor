@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { ItemIcon, SchematicIcon } from "@/components/item-icon";
+import { BackToTop } from "@/components/back-to-top";
 import {
   gameData,
   itemName,
@@ -188,6 +189,17 @@ export function HardDriveTab() {
     return alts.filter((s) => {
       if (s.name.toLowerCase().includes(q)) return true;
       if (s.className.toLowerCase().includes(q)) return true;
+      // Group-level match: if the query matches the product item name or any
+      // of its original (non-alt) recipe names, surface every alt in the
+      // group so the user sees the full comparison.
+      const product = primaryProductFor(s);
+      if (product) {
+        if (itemName(product).toLowerCase().includes(q)) return true;
+        for (const rc of baseRecipesFor(product)) {
+          const r = gameData.recipes[rc];
+          if (r?.name.toLowerCase().includes(q)) return true;
+        }
+      }
       for (const rc of s.unlocks.recipes) {
         const r = gameData.recipes[rc];
         if (!r) continue;
@@ -294,7 +306,7 @@ export function HardDriveTab() {
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Filter by name, recipe, ingredient, or product…"
+                placeholder="Filter by item, alternate name, recipe, or ingredient…"
                 className="pl-8"
               />
             </div>
@@ -380,6 +392,8 @@ export function HardDriveTab() {
           </Card>
         );
       })}
+
+      <BackToTop />
     </div>
   );
 }
