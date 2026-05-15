@@ -7,6 +7,7 @@ import { PurityTab } from "@/components/purity-tab";
 import { InventoryTab } from "@/components/inventory-tab";
 import { MamResearchTab } from "@/components/mam-research-tab";
 import { HardDriveTab } from "@/components/hard-drive-tab";
+import { ShopTab } from "@/components/shop-tab";
 import { ComingSoonTab } from "@/components/coming-soon-tab";
 import { PendingChanges } from "@/components/pending-changes";
 import { PrivacyBanner } from "@/components/privacy-banner";
@@ -35,6 +36,7 @@ export default function Home() {
                 <TabsTrigger value="inventory">Inventory</TabsTrigger>
                 <TabsTrigger value="research">MAM Research</TabsTrigger>
                 <TabsTrigger value="harddrive">Hard Drives</TabsTrigger>
+                <TabsTrigger value="shop">AWESOME Shop</TabsTrigger>
                 <TabsTrigger value="phase">Game Phase</TabsTrigger>
               </TabsList>
 
@@ -49,6 +51,9 @@ export default function Home() {
               </TabsContent>
               <TabsContent value="harddrive">
                 <HardDriveTab />
+              </TabsContent>
+              <TabsContent value="shop">
+                <ShopTab />
               </TabsContent>
               <TabsContent value="phase">
                 <ComingSoonTab
