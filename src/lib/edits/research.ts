@@ -286,8 +286,14 @@ const ensureTreeInUnlocked = (
  *   - Panel toggles are NEVER flipped off on undo (would be unsafe — other
  *     unlocks could grant the same panel)
  */
-/** Schematic types this editor knows how to flip safely. */
-const EDITABLE_TYPES = new Set(["EST_MAM", "EST_Alternate"]);
+/** Schematic types this editor knows how to flip safely.
+ *  - EST_MAM         : MAM research nodes (have a researchTreePath)
+ *  - EST_Alternate   : Hard-drive alternate recipes (no tree)
+ *  - EST_Milestone   : HUB milestones (no tree). Same write path: push into
+ *                      mPurchasedSchematics + apply UnlockSubsystem effects.
+ *                      Recipes/buildings re-derive from mPurchasedSchematics
+ *                      on load. */
+const EDITABLE_TYPES = new Set(["EST_MAM", "EST_Alternate", "EST_Milestone"]);
 
 export function setSchematicUnlocked(
   save: SatisfactorySave,
