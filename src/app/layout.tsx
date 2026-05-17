@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Oxanium } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -22,10 +22,114 @@ const oxanium = Oxanium({
   weight: ["400", "600", "700", "800"],
 });
 
+const SITE_URL = "https://satisfactory-editor.com";
+const SITE_NAME = "Satisfactory Save Editor";
+const SITE_TITLE =
+  "Satisfactory Save Editor — Edit Your 1.2 .sav in the Browser";
+const SITE_DESCRIPTION =
+  "Free, secure, editor for Satisfactory 1.2 save files. Bulk edit resource node purity, inventory and hand slots, MAM research, hard-drive alternate recipes, game phases, and AWESOME shop — your save never leaves your computer.";
+
 export const metadata: Metadata = {
-  title: "Satisfactory Save Editor",
-  description:
-    "Static, fully client-side editor for Satisfactory 1.2 save files. Your save never leaves your browser.",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: SITE_TITLE,
+    template: "%s · Satisfactory Save Editor",
+  },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  keywords: [
+    "Satisfactory",
+    "editor",
+    "change save",
+    "Satisfactory save editor",
+    "bulk edit",
+    "bulk changes",
+    "Satisfactory 1.2",
+    "edit .sav file",
+    "Satisfactory save game",
+    "resource purity editor",
+    "node purity",
+    "MAM research unlock",
+    "hard drive alternate recipes",
+    "game phases",
+    "AWESOME Shop",
+    "client-side save editor",
+    "Coffee Stain Studios",
+  ],
+  authors: [{ name: SITE_NAME, url: SITE_URL }],
+  creator: SITE_NAME,
+  publisher: SITE_NAME,
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: SITE_NAME,
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
+  },
+  formatDetection: {
+    email: false,
+    address: false,
+    telephone: false,
+  },
+  category: "utility",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0e3c4a",
+  colorScheme: "dark",
+};
+
+// JSON-LD describing the editor as a free, browser-based WebApplication.
+// Inlined because that's the form crawlers expect; the CSP already allows
+// `script-src 'unsafe-inline'` so no nonce is required.
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  name: SITE_NAME,
+  url: SITE_URL,
+  description: SITE_DESCRIPTION,
+  applicationCategory: "GameApplication",
+  applicationSubCategory: "Save Editor",
+  operatingSystem: "Any (modern web browser)",
+  browserRequirements: "Requires JavaScript and Web Worker support.",
+  inLanguage: "en",
+  isAccessibleForFree: true,
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+  },
+  featureList: [
+    "Edit resource node purity (Impure / Normal / Pure)",
+    "Bump inventory and arm-equipment slot counts",
+    "Unlock or lock any MAM research schematic",
+    "Unlock or lock hard-drive alternate recipes",
+  ],
+  about: {
+    "@type": "VideoGame",
+    name: "Satisfactory",
+    publisher: { "@type": "Organization", name: "Coffee Stain Studios" },
+  },
 };
 
 export default function RootLayout({
@@ -40,6 +144,11 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full bg-background text-foreground">
+        <script
+          type="application/ld+json"
+          // Crawlers parse this; no XSS surface — content is a fixed object.
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+        />
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

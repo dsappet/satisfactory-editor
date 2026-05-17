@@ -162,8 +162,8 @@ export function Hero() {
             style={{ fontFamily: "var(--font-display)" }}
           >
             Edit your <code className="text-white">.sav</code> in the browser.
-            Resource purity, inventory slots, and more — all client-side, no
-            uploads, no backend.
+            Resource purity, inventory slots, MAM research, hard-drive
+            alternates — all client-side, no uploads, no backend.
           </p>
         </div>
 
