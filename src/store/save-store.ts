@@ -141,7 +141,7 @@ const updateResearchEdit = (
   const edit: StagedEdit = {
     id: newId(),
     kind: "research",
-    label: `MAM research: ${parts.join(", ")}`,
+    label: `Schematic unlocks: ${parts.join(", ")}`,
     delta,
   };
   return {

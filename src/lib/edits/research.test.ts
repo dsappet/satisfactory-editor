@@ -258,17 +258,43 @@ describe("setSchematicUnlocked", () => {
     expect(readBool(unlock, flag)).toBe(true);
   });
 
-  test("rejects schematic types that aren't MAM or Alternate", () => {
+  test("rejects schematic types that aren't editable", () => {
     const save = makeSave({});
-    const milestone = Object.values(gameData.schematics).find(
-      (s) => s.type === "EST_Milestone"
+    const tutorial = Object.values(gameData.schematics).find(
+      (s) => s.type === "EST_Tutorial"
     )!;
     expect(() =>
       setSchematicUnlocked(save, {
-        className: milestone.className,
+        className: tutorial.className,
         unlocked: true,
       })
     ).toThrow(/not editable/);
+  });
+
+  test("accepts EST_Milestone schematics — no tree, same effect path as MAM", () => {
+    // Schematic_1-3_C (Field Research) grants +10 inventory slots and the map.
+    const save = makeSave({ startingInv: 18 });
+    const ms = gameData.schematics["Schematic_1-3_C"];
+    expect(ms).toBeDefined();
+    expect(ms.type).toBe("EST_Milestone");
+
+    setSchematicUnlocked(save, { className: ms.className, unlocked: true });
+
+    const schMgr = findObj(save, SCHEMATIC_MANAGER_TYPE_PATH);
+    const resMgr = findObj(save, RESEARCH_MANAGER_TYPE_PATH);
+    const unlock = findObj(save, UNLOCK_SUBSYSTEM_TYPE_PATH);
+    expect(readArr(schMgr, "mPurchasedSchematics")).toContain(ms.pathName);
+    // Milestones have no researchTreePath — the tree array should stay empty.
+    expect(readArr(resMgr, "mUnlockedResearchTrees")).toHaveLength(0);
+    expect(readInt(unlock, "mNumTotalInventorySlots")).toBe(
+      18 + ms.unlocks.inventorySlots
+    );
+    if (ms.unlocks.map) expect(readBool(unlock, "mIsMapUnlocked")).toBe(true);
+
+    // Undo path works.
+    setSchematicUnlocked(save, { className: ms.className, unlocked: false });
+    expect(readArr(schMgr, "mPurchasedSchematics")).not.toContain(ms.pathName);
+    expect(readInt(unlock, "mNumTotalInventorySlots")).toBe(18);
   });
 
   test("accepts EST_Alternate schematics (hard-drive alts) and applies slot unlocks", () => {
