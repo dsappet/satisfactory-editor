@@ -27,7 +27,7 @@ const SITE_NAME = "Satisfactory Save Editor";
 const SITE_TITLE =
   "Satisfactory Save Editor — Edit Your 1.2 .sav in the Browser";
 const SITE_DESCRIPTION =
-  "Free, fully client-side editor for Satisfactory 1.2 save files. Edit resource node purity, inventory and hand slots, MAM research, and hard-drive alternate recipes — your save never leaves your browser.";
+  "Free, secure, editor for Satisfactory 1.2 save files. Bulk edit resource node purity, inventory and hand slots, MAM research, hard-drive alternate recipes, game phases, and AWESOME shop — your save never leaves your computer.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -38,13 +38,21 @@ export const metadata: Metadata = {
   description: SITE_DESCRIPTION,
   applicationName: SITE_NAME,
   keywords: [
+    "Satisfactory",
+    "editor",
+    "change save",
     "Satisfactory save editor",
+    "bulk edit",
+    "bulk changes",
     "Satisfactory 1.2",
     "edit .sav file",
     "Satisfactory save game",
     "resource purity editor",
+    "node purity",
     "MAM research unlock",
     "hard drive alternate recipes",
+    "game phases",
+    "AWESOME Shop",
     "client-side save editor",
     "Coffee Stain Studios",
   ],
