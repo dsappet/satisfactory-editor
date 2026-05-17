@@ -1,12 +1,12 @@
 /**
- * MAM research / schematic unlock edits.
+ * Schematic unlock edits — MAM research, hard-drive alternates, AWESOME shop.
  *
  * Empirical save model (1.2):
  *
  *   SchematicManager.mPurchasedSchematics  ArrayProperty<ObjectProperty>
  *     Every completed schematic — milestones, MAM, hard drives, alternates,
- *     tutorials. Adding a MAM schematic's pathName here is what marks it as
- *     "done" from the player's perspective.
+ *     shop purchases, tutorials. Adding a schematic's pathName here is what
+ *     marks it as "done" from the player's perspective.
  *
  *   ResearchManager.mUnlockedResearchTrees ArrayProperty<ObjectProperty>
  *     One entry per MAM tree the player has unlocked at least one node of
@@ -23,10 +23,20 @@
  * derives the available-recipes list from mPurchasedSchematics on load, so
  * adding to that array is sufficient for recipes to unlock.
  *
+ * AWESOME shop bundles (EST_ResourceSink) sometimes wrap nested EST_Custom
+ * schematics via BP_UnlockSchematic_C — a "Foundation Material" purchase
+ * unlocks the parent shop entry plus a handful of customizer build-gun
+ * schematics. We mirror what the game does at purchase time and add the
+ * children to mPurchasedSchematics too. On undo, a child is only removed if
+ * no OTHER currently-purchased shop bundle still references it (49 nested
+ * children in 1.2 are referenced by more than one parent).
+ *
  * Items granted by mUnlocks (BP_UnlockGiveItem_C) are NOT pushed into the
- * player's inventory by this edit — those one-shot grants would compound on
- * every re-apply. Players who want the items should pick up the unlock
- * naturally or use the inventory contents editor (future).
+ * player's inventory by this edit. For MAM/alternates those are one-shot
+ * grants that would compound on re-apply. For shop "Decorations" (statues,
+ * trinkets) and "Parts" (hard drive packs, ammo bundles) the items are the
+ * whole point of the purchase — but inventory writes are out of scope here.
+ * The UI surfaces a clear caveat for those sections.
  */
 import type {
   SatisfactorySave,
@@ -287,13 +297,21 @@ const ensureTreeInUnlocked = (
  *     unlocks could grant the same panel)
  */
 /** Schematic types this editor knows how to flip safely.
- *  - EST_MAM         : MAM research nodes (have a researchTreePath)
- *  - EST_Alternate   : Hard-drive alternate recipes (no tree)
- *  - EST_Milestone   : HUB milestones (no tree). Same write path: push into
- *                      mPurchasedSchematics + apply UnlockSubsystem effects.
- *                      Recipes/buildings re-derive from mPurchasedSchematics
- *                      on load. */
-const EDITABLE_TYPES = new Set(["EST_MAM", "EST_Alternate", "EST_Milestone"]);
+ *  - EST_MAM          : MAM research nodes (have a researchTreePath)
+ *  - EST_Alternate    : Hard-drive alternate recipes (no tree)
+ *  - EST_ResourceSink : AWESOME shop bundles (no tree). May wrap nested
+ *                       EST_Custom children via BP_UnlockSchematic_C; see
+ *                       bundle-children handling below.
+ *  - EST_Milestone    : HUB milestones (no tree). Same write path: push into
+ *                       mPurchasedSchematics + apply UnlockSubsystem effects.
+ *                       Recipes/buildings re-derive from mPurchasedSchematics
+ *                       on load. */
+const EDITABLE_TYPES = new Set([
+  "EST_MAM",
+  "EST_Alternate",
+  "EST_ResourceSink",
+  "EST_Milestone",
+]);
 
 export function setSchematicUnlocked(
   save: SatisfactorySave,
@@ -346,6 +364,36 @@ export function setSchematicUnlocked(
 
   applyUnlockEffectsToSubsystem(unlock, sch, args.unlocked ? 1 : -1);
   syncPlayerObservedSlots(save);
+
+  // Shop bundles (EST_ResourceSink) wrap nested EST_Custom children via
+  // BP_UnlockSchematic_C. Mirror the game's purchase-time behavior: add each
+  // child to mPurchasedSchematics on apply; on undo, only remove a child if
+  // no OTHER currently-unlocked shop bundle still references it. The "remaining"
+  // set above already reflects the post-edit world.
+  if (sch.unlocks.schematics.length > 0) {
+    if (args.unlocked) {
+      for (const childCls of sch.unlocks.schematics) {
+        const child = gameData.schematics[childCls];
+        if (child?.pathName) {
+          ensureSchematicInPurchased(schMgr, child.pathName, true);
+        }
+      }
+    } else {
+      const stillReferenced = new Set<string>();
+      for (const cn of remaining) {
+        const other = gameData.schematics[cn];
+        if (!other) continue;
+        for (const ch of other.unlocks.schematics) stillReferenced.add(ch);
+      }
+      for (const childCls of sch.unlocks.schematics) {
+        if (stillReferenced.has(childCls)) continue;
+        const child = gameData.schematics[childCls];
+        if (child?.pathName) {
+          ensureSchematicInPurchased(schMgr, child.pathName, false);
+        }
+      }
+    }
+  }
 }
 
 /**
