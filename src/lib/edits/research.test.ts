@@ -258,17 +258,116 @@ describe("setSchematicUnlocked", () => {
     expect(readBool(unlock, flag)).toBe(true);
   });
 
-  test("rejects schematic types that aren't MAM or Alternate", () => {
+  test("rejects schematic types that aren't editable", () => {
     const save = makeSave({});
-    const milestone = Object.values(gameData.schematics).find(
-      (s) => s.type === "EST_Milestone"
+    const tutorial = Object.values(gameData.schematics).find(
+      (s) => s.type === "EST_Tutorial"
     )!;
     expect(() =>
       setSchematicUnlocked(save, {
-        className: milestone.className,
+        className: tutorial.className,
         unlocked: true,
       })
     ).toThrow(/not editable/);
+  });
+
+  test("accepts EST_ResourceSink (shop) schematics", () => {
+    const save = makeSave({});
+    const shopBuilding = Object.values(gameData.schematics).find(
+      (s) =>
+        s.type === "EST_ResourceSink" &&
+        s.unlocks.recipes.length > 0 &&
+        s.unlocks.schematics.length === 0
+    );
+    if (!shopBuilding) return;
+    expect(() =>
+      setSchematicUnlocked(save, {
+        className: shopBuilding.className,
+        unlocked: true,
+      })
+    ).not.toThrow();
+    const schMgr = findObj(save, SCHEMATIC_MANAGER_TYPE_PATH);
+    expect(readArr(schMgr, "mPurchasedSchematics")).toContain(
+      shopBuilding.pathName
+    );
+  });
+
+  test("shop bundle: nested EST_Custom children are added on apply", () => {
+    const save = makeSave({});
+    const bundle =
+      gameData.schematics["ResourceSink_Customizer_Asphalt_FoundationMaterial_C"];
+    expect(bundle).toBeDefined();
+    expect(bundle.unlocks.schematics.length).toBeGreaterThan(0);
+
+    setSchematicUnlocked(save, {
+      className: bundle.className,
+      unlocked: true,
+    });
+
+    const schMgr = findObj(save, SCHEMATIC_MANAGER_TYPE_PATH);
+    const purchased = readArr(schMgr, "mPurchasedSchematics");
+    expect(purchased).toContain(bundle.pathName);
+    for (const childCls of bundle.unlocks.schematics) {
+      const child = gameData.schematics[childCls];
+      if (!child?.pathName) continue;
+      expect(purchased).toContain(child.pathName);
+    }
+  });
+
+  test("shop bundle undo: removes children NOT shared with another unlocked bundle", () => {
+    const a =
+      gameData.schematics["ResourceSink_Customizer_Asphalt_FoundationMaterial_C"];
+    const b = gameData.schematics["ResourceSink_DiagonalRamps_C"];
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+
+    // Pick a child that BOTH bundles reference, and one only `a` references.
+    const aChildren = new Set(a.unlocks.schematics);
+    const bChildren = new Set(b.unlocks.schematics);
+    const shared = [...aChildren].find((c) => bChildren.has(c));
+    const onlyA = [...aChildren].find((c) => !bChildren.has(c));
+    if (!shared || !onlyA) return;
+    const sharedPath = gameData.schematics[shared].pathName;
+    const onlyAPath = gameData.schematics[onlyA].pathName;
+
+    const save = makeSave({});
+    setSchematicUnlocked(save, { className: a.className, unlocked: true });
+    setSchematicUnlocked(save, { className: b.className, unlocked: true });
+
+    setSchematicUnlocked(save, { className: a.className, unlocked: false });
+
+    const schMgr = findObj(save, SCHEMATIC_MANAGER_TYPE_PATH);
+    const purchased = readArr(schMgr, "mPurchasedSchematics");
+    expect(purchased).not.toContain(a.pathName);
+    expect(purchased).toContain(b.pathName);
+    expect(purchased).toContain(sharedPath);
+    expect(purchased).not.toContain(onlyAPath);
+  });
+
+  test("accepts EST_Milestone schematics — no tree, same effect path as MAM", () => {
+    // Schematic_1-3_C (Field Research) grants +10 inventory slots and the map.
+    const save = makeSave({ startingInv: 18 });
+    const ms = gameData.schematics["Schematic_1-3_C"];
+    expect(ms).toBeDefined();
+    expect(ms.type).toBe("EST_Milestone");
+
+    setSchematicUnlocked(save, { className: ms.className, unlocked: true });
+
+    const schMgr = findObj(save, SCHEMATIC_MANAGER_TYPE_PATH);
+    const resMgr = findObj(save, RESEARCH_MANAGER_TYPE_PATH);
+    const unlock = findObj(save, UNLOCK_SUBSYSTEM_TYPE_PATH);
+    expect(readArr(schMgr, "mPurchasedSchematics")).toContain(ms.pathName);
+    // Milestones have no researchTreePath — the tree array should stay empty.
+    expect(readArr(resMgr, "mUnlockedResearchTrees")).toHaveLength(0);
+    expect(readInt(unlock, "mNumTotalInventorySlots")).toBe(
+      18 + ms.unlocks.inventorySlots
+    );
+    if (ms.unlocks.map) expect(readBool(unlock, "mIsMapUnlocked")).toBe(true);
+
+    // Undo path works.
+    setSchematicUnlocked(save, { className: ms.className, unlocked: false });
+    expect(readArr(schMgr, "mPurchasedSchematics")).not.toContain(ms.pathName);
+    expect(readInt(unlock, "mNumTotalInventorySlots")).toBe(18);
   });
 
   test("accepts EST_Alternate schematics (hard-drive alts) and applies slot unlocks", () => {
@@ -298,7 +397,16 @@ describe("setBulkSchematicUnlocked", () => {
     const save = makeSave({ startingInv: 18, startingArm: 1 });
     setBulkSchematicUnlocked(save, true, allMamClasses);
     const state = getResearchState(save);
-    expect(state.unlockedClassNames.size).toBe(allMamClasses.length);
+    // 7 MAM schematics wrap nested children via BP_UnlockSchematic_C (e.g.
+    // Research_Sulfur_TurboFuel → Schematic_Alternate_TurboFuel) — those get
+    // pulled into mPurchasedSchematics too, so the unique-class count is the
+    // MAM total plus those nested children.
+    for (const cn of allMamClasses) {
+      expect(state.unlockedClassNames.has(cn)).toBe(true);
+    }
+    expect(state.unlockedClassNames.size).toBeGreaterThanOrEqual(
+      allMamClasses.length
+    );
 
     const allMam = allMamClasses.map((c) => gameData.schematics[c]);
     const expectedInv =
