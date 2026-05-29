@@ -43,6 +43,11 @@ export function PendingChanges() {
                   ({e.delta > 0 ? `+${e.delta}` : e.delta} net)
                 </span>
               )}
+              {e.kind === "spawnItems" && (
+                <span className="text-muted-foreground">
+                  ({e.crateCount} crate{e.crateCount === 1 ? "" : "s"})
+                </span>
+              )}
               <button
                 aria-label="Remove from list"
                 className="text-muted-foreground hover:text-foreground"

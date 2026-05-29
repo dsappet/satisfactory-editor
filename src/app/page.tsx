@@ -9,6 +9,7 @@ import { MamResearchTab } from "@/components/mam-research-tab";
 import { HardDriveTab } from "@/components/hard-drive-tab";
 import { ShopTab } from "@/components/shop-tab";
 import { GamePhaseTab } from "@/components/game-phase-tab";
+import { ItemSpawnTab } from "@/components/item-spawn-tab";
 import { PendingChanges } from "@/components/pending-changes";
 import { PrivacyBanner } from "@/components/privacy-banner";
 import { Hero } from "@/components/hero";
@@ -38,6 +39,7 @@ export default function Home() {
                 <TabsTrigger value="harddrive">Hard Drives</TabsTrigger>
                 <TabsTrigger value="shop">AWESOME Shop</TabsTrigger>
                 <TabsTrigger value="phase">Game Phase</TabsTrigger>
+                <TabsTrigger value="spawn">Spawn Items</TabsTrigger>
               </TabsList>
 
               <TabsContent value="purity">
@@ -57,6 +59,9 @@ export default function Home() {
               </TabsContent>
               <TabsContent value="phase">
                 <GamePhaseTab />
+              </TabsContent>
+              <TabsContent value="spawn">
+                <ItemSpawnTab />
               </TabsContent>
             </Tabs>
 

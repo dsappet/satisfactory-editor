@@ -34,6 +34,14 @@ import {
   setSchematicUnlocked as applySchematicUnlocked,
   setBulkSchematicUnlocked as applyBulkSchematicUnlocked,
 } from "@/lib/edits/research";
+import {
+  listSpawnTargets,
+  spawnItemsInCrates,
+  removeSpawnedObjects,
+  type SpawnTarget,
+  type SpawnItemInput,
+  type SpawnResult,
+} from "@/lib/edits/spawn-items";
 import type { PurityTarget } from "@/lib/parser/types";
 
 export type ResearchSnapshot = {
@@ -68,10 +76,16 @@ export type LoadResult = {
   purity: PurityState;
   slots: SlotsState;
   research: ResearchSnapshot;
+  spawnTargets: SpawnTarget[];
 };
 
 let current: SatisfactorySave | null = null;
 let originalFileName = "save";
+
+// instanceNames of objects created by the most recent spawn-items edit. Kept
+// so re-staging the edit can clear the old crates first (idempotent rebuild)
+// rather than piling duplicates into the save. Cleared on load/reset.
+let spawnedCrateObjectNames: string[] = [];
 
 const requireSave = (): SatisfactorySave => {
   if (!current) throw new Error("No save loaded.");
@@ -104,11 +118,13 @@ const api = {
       onProgress ? (p, m) => onProgress(p, m) : undefined
     );
     current = save;
+    spawnedCrateObjectNames = [];
     return {
       summary: summarize(save, fileName),
       purity: getPurityState(save),
       slots: getSlotsState(save),
       research: snapshotResearch(save),
+      spawnTargets: listSpawnTargets(save),
     };
   },
 
@@ -165,6 +181,36 @@ const api = {
     return { research: snapshotResearch(save), slots: getSlotsState(save) };
   },
 
+  async getSpawnTargets(): Promise<SpawnTarget[]> {
+    return listSpawnTargets(requireSave());
+  },
+
+  /**
+   * (Re)build the spawned crates from the current selection. Idempotent: any
+   * crates from a previous call are removed first, so re-staging reflects the
+   * latest selection instead of accumulating. Returns a summary of what was
+   * created (crate count, total items) for the staged-edit label.
+   */
+  async spawnItems(args: {
+    playerInstanceName: string;
+    items: SpawnItemInput[];
+  }): Promise<SpawnResult> {
+    const save = requireSave();
+    const result = spawnItemsInCrates(save, {
+      playerInstanceName: args.playerInstanceName,
+      items: args.items,
+      removeInstanceNames: spawnedCrateObjectNames,
+    });
+    spawnedCrateObjectNames = result.spawnedInstanceNames;
+    return result;
+  },
+
+  /** Remove all crates created by spawnItems, reverting the edit in memory. */
+  async clearSpawnedItems(): Promise<void> {
+    removeSpawnedObjects(requireSave(), spawnedCrateObjectNames);
+    spawnedCrateObjectNames = [];
+  },
+
   /**
    * Re-serialize the in-memory save, then re-parse the result and return the
    * resulting purity state. Used to verify edits actually round-trip cleanly
@@ -204,6 +250,7 @@ const api = {
 
   async reset(): Promise<void> {
     current = null;
+    spawnedCrateObjectNames = [];
   },
 };
 

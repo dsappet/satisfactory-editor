@@ -166,6 +166,18 @@ patterns rather than inventing new ones.
 - **Hard Drive alternates** — every `EST_Alternate` schematic, grouped by
   the item they produce. Same write path as MAM (no research tree to
   update).
+- **Item spawn** — drops a dismantle-style crate (`BP_Crate_C`) at a chosen
+  player's location, filled with selected items. The ONLY edit that *creates*
+  objects from scratch (a crate `SaveEntity` + an `FGInventoryComponent`
+  `SaveComponent` pair pushed onto the persistent level) rather than mutating
+  existing ones. Two caveats: (1) it needs item `pathName`s, which only exist
+  in `game-data.json` after `bun run build:docs` is re-run with the new
+  pipeline — the tab shows a notice and refuses to spawn otherwise; (2) the
+  crate's in-game binding depends on `CRATE_TYPE_PATH` and
+  `CRATE_INVENTORY_COMPONENT_NAME` in `spawn-items.ts`, which are best-effort
+  until confirmed by dumping a real dismantle-crate save (parser round-trip is
+  covered by tests + `scripts/test-crate-roundtrip.ts`, but in-game appearance
+  is not verifiable without the game).
 
 ## Stylistic / behavioural conventions
 
