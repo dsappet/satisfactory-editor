@@ -22,7 +22,6 @@ import {
   CRATE_TYPE_PATH,
   INVENTORY_COMPONENT_TYPE_PATH,
 } from "../src/lib/edits/spawn-items";
-import { gameData, itemPath, stackSizeLimit } from "../src/lib/game-data";
 
 const path = process.argv[2] ?? "test/dune.sav";
 const buf = readFileSync(path);
@@ -37,28 +36,24 @@ if (!target) {
   process.exit(1);
 }
 
-// Pick two real items that have known paths in the bundled data.
-const picks = ["Desc_IronPlate_C", "Desc_Cable_C", "Desc_IronIngot_C"]
-  .filter((cn) => itemPath(cn))
-  .slice(0, 2);
-if (picks.length === 0) {
-  console.error(
-    "No item paths in game-data.json — run `bun run build:docs` first."
-  );
-  process.exit(1);
-}
-const items = picks.map((cn) => ({
-  pathName: itemPath(cn)!,
-  count: 250,
-  stackSize: stackSizeLimit(cn) ?? 100,
-  label: gameData.items[cn]?.name ?? cn,
-}));
-
-const result = spawnItemsInCrates(save, {
-  playerInstanceName: target.instanceName,
-  items,
-});
-console.log("spawn result:", result);
+// Use literal full item paths so the script works without a regenerated
+// game-data.json (these are stable 1.x item descriptor paths).
+const items = [
+  {
+    pathName:
+      "/Game/FactoryGame/Resource/Parts/IronPlate/Desc_IronPlate.Desc_IronPlate_C",
+    count: 250,
+    stackSize: 200,
+    label: "Iron Plate",
+  },
+  {
+    pathName:
+      "/Game/FactoryGame/Resource/Parts/Cable/Desc_Cable.Desc_Cable_C",
+    count: 75,
+    stackSize: 100,
+    label: "Cable",
+  },
+];
 
 const countCrates = (s: ReturnType<typeof parseSave>) => {
   let crates = 0;
@@ -76,18 +71,63 @@ const countCrates = (s: ReturnType<typeof parseSave>) => {
   return { crates, comps };
 };
 
-console.log("BEFORE round-trip:", countCrates(save));
+const before = countCrates(save);
+const result = spawnItemsInCrates(save, {
+  playerInstanceName: target.instanceName,
+  items,
+});
+console.log("spawn result:", result);
+const afterSpawn = countCrates(save);
+console.log("crates before spawn:", before, "after spawn:", afterSpawn);
 
 const out = serializeSave(save);
 const reparsed = parseSave(path, out.buffer);
-const after = countCrates(reparsed);
-console.log("AFTER round-trip: ", after);
+const afterRT = countCrates(reparsed);
+console.log("crates after round-trip:", afterRT);
 
-if (after.crates === result.crateCount && after.comps === result.crateCount) {
+// Find our exact spawned crate + its inventory in the re-parsed save and
+// confirm the items came back intact.
+const crateName = result.spawnedInstanceNames[0];
+const compName = result.spawnedInstanceNames[1];
+let foundCrate = false;
+let stacks: Array<{ pathName: string; num: number }> = [];
+for (const lvl of Object.values(reparsed.levels)) {
+  for (const o of lvl.objects) {
+    if (o.instanceName === crateName) foundCrate = true;
+    if (o.instanceName === compName) {
+      const arr = (o.properties as Record<string, unknown>)["mInventoryStacks"] as
+        | { values?: unknown[] }
+        | undefined;
+      stacks = ((arr?.values ?? []) as Array<{
+        properties: {
+          Item: { value: { itemReference: { pathName: string } } };
+          NumItems: { value: number };
+        };
+      }>).map((v) => ({
+        pathName: v.properties.Item.value.itemReference.pathName,
+        num: v.properties.NumItems.value,
+      }));
+    }
+  }
+}
+console.log("our spawned crate survived:", foundCrate);
+console.log("our crate's stacks after round-trip:", stacks);
+
+const expectedTotal = items.reduce((a, it) => a + it.count, 0);
+const gotTotal = stacks.reduce((a, s) => a + s.num, 0);
+const ok =
+  afterRT.crates === afterSpawn.crates &&
+  afterRT.comps === afterSpawn.comps &&
+  foundCrate &&
+  gotTotal === expectedTotal;
+
+if (ok) {
   console.log(
-    `OK — ${after.crates} crate(s) + ${after.comps} inventory component(s) survived serialize → parse.`
+    `OK — spawned crate + ${stacks.length} stack(s) totalling ${gotTotal} items survived serialize → parse (counts ${afterSpawn.crates}→${afterRT.crates}).`
   );
 } else {
-  console.error("MISMATCH — crates did not round-trip cleanly.");
+  console.error(
+    `MISMATCH — expected ${expectedTotal} items in the round-tripped crate, got ${gotTotal}.`
+  );
   process.exit(1);
 }

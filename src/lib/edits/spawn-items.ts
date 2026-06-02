@@ -17,17 +17,21 @@
  * The serializer (data-blob / toc-blob) regenerates both the object-header
  * list and the data blob from `level.objects` on write, so adding new objects
  * is just `level.objects.push(...)` — there's no separate index to keep in
- * sync. We copy structural fields (rootObject, saveCustomVersion,
- * shouldMigrateObjectRefsToPersistent, flags) from real sibling objects in the
- * same level so the new objects match the save's framing exactly.
+ * sync. We copy version framing (rootObject, saveCustomVersion,
+ * shouldMigrateObjectRefsToPersistent) from a real sibling in the same level
+ * and set the crate-specific flags directly.
  *
- * UNVERIFIED IN-GAME: the parser round-trip (serialize → parse) is covered by
- * tests, but whether Satisfactory itself binds the saved inventory component
- * to the crate on load depends on two constants that can only be confirmed by
- * dumping a real save with a dismantle crate in it — CRATE_TYPE_PATH and
- * CRATE_INVENTORY_COMPONENT_NAME (the subobject name the crate's class gives
- * its inventory). If a future dump shows different values, change them here;
- * the rest of the logic is independent of their exact strings.
+ * The crate format below was confirmed by dumping a real dismantle crate from
+ * a 1.2 save and is exercised end-to-end (spawn → serialize → parse) by
+ * scripts/test-crate-roundtrip.ts. Key facts from that dump:
+ *   - crate actor typePath = CRATE_TYPE_PATH, flags 8, rootObject the bare
+ *     level name; it has NO mInventory property — the link to its inventory is
+ *     the `components` list, and it carries mCrateType = CT_DismantleCrate.
+ *   - the inventory component is named `<crate>.inventory` (flags 262152) with
+ *     properties mAdjustedSizeDiff, mInventoryStacks, mArbitrarySlotSizes,
+ *     mAllowedItemDescriptors — the last three all parallel to the slot count.
+ *   - inventory-stack tags carry the /Script/FactoryGame package node and the
+ *     Item struct property carries flags 8; itemReference.levelName is "".
  */
 import type {
   SatisfactorySave,
@@ -49,10 +53,26 @@ export const INVENTORY_COMPONENT_TYPE_PATH =
 
 /**
  * Subobject name the crate's class gives its inventory component. The full
- * component instanceName is `<crate>.<this>`. Best-effort — confirm against a
- * real save (see file header).
+ * component instanceName is `<crate>.<this>`. Confirmed by dumping a real
+ * dismantle crate (see scripts/test-crate-roundtrip.ts).
  */
-export const CRATE_INVENTORY_COMPONENT_NAME = "StorageInventory";
+export const CRATE_INVENTORY_COMPONENT_NAME = "inventory";
+
+/**
+ * Crate kind. A real dismantle crate carries this enum; we reuse it so the
+ * spawned crate behaves like the in-game dismantle crate (auto-collected when
+ * emptied, retrievable from the HUB, etc.).
+ */
+export const CRATE_TYPE_ENUM_VALUE = "EFGCrateType::CT_DismantleCrate";
+
+/** UE struct/enum package node that appears in 1.2 complete property tags. */
+const FACTORYGAME_PACKAGE = "/Script/FactoryGame";
+
+// Object flags observed on a real dismantle crate (actor) and its inventory
+// component. These are role-specific, not save-specific, so we set them
+// directly rather than copying from a sibling.
+const CRATE_ACTOR_FLAGS = 8;
+const CRATE_INVENTORY_FLAGS = 262152;
 
 /**
  * Cap on how many stacks (slots) go in a single crate. Dismantle crates resize
@@ -174,17 +194,6 @@ const intProperty = (name: string, value: number): IntProperty => ({
   value,
 });
 
-const objectProperty = (
-  name: string,
-  ref: ObjectReference
-): ObjectProperty =>
-  ({
-    type: "ObjectProperty",
-    name,
-    propertyTagType: { name: "ObjectProperty", children: [] },
-    value: ref,
-  }) as unknown as ObjectProperty;
-
 const intArrayProperty = (name: string, values: number[]): ArrayProperty =>
   ({
     type: "ArrayProperty",
@@ -196,8 +205,25 @@ const intArrayProperty = (name: string, values: number[]): ArrayProperty =>
     values,
   }) as unknown as ArrayProperty;
 
-// FInventoryStack as a dynamic struct, matching the shape inventory.ts writes
-// (which is empirically confirmed to round-trip on a 1.2 save).
+// ArrayProperty<ObjectProperty> whose values are raw ObjectReferences. Used for
+// mAllowedItemDescriptors (all empty refs on a fresh crate = no restriction).
+const objRefArrayProperty = (
+  name: string,
+  values: ObjectReference[]
+): ArrayProperty =>
+  ({
+    type: "ArrayProperty",
+    name,
+    propertyTagType: {
+      name: "ArrayProperty",
+      children: [{ name: "ObjectProperty", children: [] }],
+    },
+    values,
+  }) as unknown as ArrayProperty;
+
+// FInventoryStack as a dynamic struct, matching exactly what a real dismantle
+// crate serializes on 1.2: the InventoryItem tag carries the /Script/FactoryGame
+// package node and the Item property carries flags=8.
 const inventoryStack = (itemPathName: string, num: number) => ({
   type: "InventoryStack",
   properties: {
@@ -206,8 +232,14 @@ const inventoryStack = (itemPathName: string, num: number) => ({
       name: "Item",
       propertyTagType: {
         name: "StructProperty",
-        children: [{ name: "InventoryItem", children: [] }],
+        children: [
+          {
+            name: "InventoryItem",
+            children: [{ name: FACTORYGAME_PACKAGE, children: [] }],
+          },
+        ],
       },
+      flags: 8,
       value: {
         itemReference: { levelName: "", pathName: itemPathName },
         itemState: { hasValidStruct: false },
@@ -228,18 +260,38 @@ const stacksArrayProperty = (
       children: [
         {
           name: "StructProperty",
-          children: [{ name: "InventoryStack", children: [] }],
+          children: [
+            {
+              name: "InventoryStack",
+              children: [{ name: FACTORYGAME_PACKAGE, children: [] }],
+            },
+          ],
         },
       ],
     },
     values,
   }) as unknown as ArrayProperty;
 
+const crateTypeEnumProperty = () => ({
+  type: "EnumProperty",
+  name: "mCrateType",
+  propertyTagType: {
+    name: "EnumProperty",
+    children: [
+      {
+        name: "EFGCrateType",
+        children: [{ name: FACTORYGAME_PACKAGE, children: [] }],
+      },
+      { name: "ByteProperty", children: [] },
+    ],
+  },
+  value: { value: CRATE_TYPE_ENUM_VALUE },
+});
+
 type StructTemplate = {
   rootObject: string;
   saveCustomVersion: number;
   shouldMigrateObjectRefsToPersistent: boolean;
-  flags?: number;
 };
 
 const templateFrom = (obj: SaveObject): StructTemplate => ({
@@ -249,7 +301,6 @@ const templateFrom = (obj: SaveObject): StructTemplate => ({
   shouldMigrateObjectRefsToPersistent:
     (obj as unknown as { shouldMigrateObjectRefsToPersistent?: boolean })
       .shouldMigrateObjectRefsToPersistent ?? false,
-  flags: (obj as unknown as { flags?: number }).flags,
 });
 
 const makeCrateActor = (
@@ -264,18 +315,17 @@ const makeCrateActor = (
     typePath: CRATE_TYPE_PATH,
     rootObject: tmpl.rootObject,
     instanceName,
-    flags: tmpl.flags,
+    flags: CRATE_ACTOR_FLAGS,
     parentEntityName: "",
     needTransform: true,
     transform,
     wasPlacedInLevel: false,
     parentObject: { levelName: "", pathName: "" },
+    // The crate finds its inventory through the components list, not an
+    // mInventory property — a real dismantle crate has no such property.
     components: [{ levelName: refLevelName, pathName: componentInstanceName }],
     properties: {
-      mInventory: objectProperty("mInventory", {
-        levelName: refLevelName,
-        pathName: componentInstanceName,
-      }),
+      mCrateType: crateTypeEnumProperty(),
     },
     specialProperties: { type: "EmptySpecialProperties" },
     trailingData: [],
@@ -295,15 +345,26 @@ const makeInventoryComponent = (
     typePath: INVENTORY_COMPONENT_TYPE_PATH,
     rootObject: tmpl.rootObject,
     instanceName,
-    flags: tmpl.flags,
+    flags: CRATE_INVENTORY_FLAGS,
     parentEntityName: crateInstanceName,
+    // Property set + order mirror a real dismantle crate's inventory component.
     properties: {
+      // Observed diff = slot count - 1 (the crate grows from a 1-slot base).
+      mAdjustedSizeDiff: intProperty(
+        "mAdjustedSizeDiff",
+        Math.max(0, stacks.length - 1)
+      ),
       mInventoryStacks: stacksArrayProperty(stacks),
       // Parallel per-slot cap array; 0 means "use the item's default stack
       // size", which is exactly what we want for a freshly spawned crate.
       mArbitrarySlotSizes: intArrayProperty(
         "mArbitrarySlotSizes",
         stacks.map(() => 0)
+      ),
+      // Parallel allow-list; empty refs = no per-slot item restriction.
+      mAllowedItemDescriptors: objRefArrayProperty(
+        "mAllowedItemDescriptors",
+        stacks.map(() => ({ levelName: "", pathName: "" }))
       ),
     },
     specialProperties: { type: "EmptySpecialProperties" },

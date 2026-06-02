@@ -195,13 +195,20 @@ describe("spawnItemsInCrates", () => {
     const t = (crate as unknown as { transform: { translation: { x: number } } })
       .transform;
     expect(t.translation.x).toBe(100);
-    // References its inventory component.
-    const invRef = crate.properties?.["mInventory"] as {
-      value: { pathName: string };
+    // Tagged as a dismantle crate, like the real in-game crate.
+    const crateType = crate.properties?.["mCrateType"] as {
+      value: { value: string };
     };
+    expect(crateType.value.value).toBe("EFGCrateType::CT_DismantleCrate");
+    // Finds its inventory through the components list (no mInventory property).
+    expect(crate.properties?.["mInventory"]).toBeUndefined();
     const comps = componentObjects(save);
     expect(comps).toHaveLength(1);
-    expect(invRef.value.pathName).toBe(comps[0].instanceName);
+    const components = (
+      crate as unknown as { components: Array<{ pathName: string }> }
+    ).components;
+    expect(components[0].pathName).toBe(comps[0].instanceName);
+    expect(comps[0].instanceName.endsWith(".inventory")).toBe(true);
     // Component points back at the crate.
     expect(
       (comps[0] as unknown as { parentEntityName: string }).parentEntityName
@@ -209,6 +216,11 @@ describe("spawnItemsInCrates", () => {
 
     const stacks = stacksOf(comps[0]);
     expect(stacks).toEqual([{ pathName: IRON, num: 10 }]);
+    // Parallel allow-list + size diff mirror a real crate.
+    const allowed = comps[0].properties?.["mAllowedItemDescriptors"] as {
+      values: unknown[];
+    };
+    expect(allowed.values).toHaveLength(1);
   });
 
   test("splits a count larger than the stack size into multiple stacks", () => {
