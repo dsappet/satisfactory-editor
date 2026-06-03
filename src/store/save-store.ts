@@ -9,9 +9,15 @@ import type {
 } from "@/workers/save-worker";
 import type { PurityState } from "@/lib/edits/purity";
 import type { SlotsState } from "@/lib/edits/inventory";
+import type { SpawnTarget, SpawnItemInput } from "@/lib/edits/spawn-items";
 import type { PurityTarget } from "@/lib/parser/types";
 
-export type StagedEditKind = "purity" | "inventory" | "armSlots" | "research";
+export type StagedEditKind =
+  | "purity"
+  | "inventory"
+  | "armSlots"
+  | "research"
+  | "spawnItems";
 
 export type StagedEdit =
   | {
@@ -42,6 +48,14 @@ export type StagedEdit =
       label: string;
       /** Net unlock count: positive = unlocks added, negative = removed. */
       delta: number;
+    }
+  | {
+      id: string;
+      kind: "spawnItems";
+      label: string;
+      totalItems: number;
+      crateCount: number;
+      playerName: string;
     };
 
 export type DownloadVerification =
@@ -72,6 +86,8 @@ export interface SaveState {
   purity: PurityState | null;
   slots: SlotsState | null;
   research: ResearchSnapshot | null;
+  /** Players that can receive a spawned crate, populated at file-load time. */
+  spawnTargets: SpawnTarget[];
   /** Class names of MAM schematics unlocked at file-load time. Used to compute
    *  the "net delta" of staged research edits. */
   researchBaseline: Set<string>;
@@ -97,6 +113,10 @@ export interface SaveState {
   stageBulkSchematicUnlocked: (
     unlocked: boolean,
     classNames: string[]
+  ) => Promise<void>;
+  stageSpawnItems: (
+    playerInstanceName: string,
+    items: SpawnItemInput[]
   ) => Promise<void>;
   removeStaged: (id: string) => void;
 
@@ -162,6 +182,7 @@ export const useSaveStore = create<SaveState>((set, get) => ({
   purity: null,
   slots: null,
   research: null,
+  spawnTargets: [],
   researchBaseline: new Set(),
   inventoryBaseline: null,
   armSlotsBaseline: null,
@@ -179,6 +200,7 @@ export const useSaveStore = create<SaveState>((set, get) => ({
       purity: null,
       slots: null,
       research: null,
+      spawnTargets: [],
       researchBaseline: new Set(),
       inventoryBaseline: null,
       armSlotsBaseline: null,
@@ -223,6 +245,7 @@ export const useSaveStore = create<SaveState>((set, get) => ({
         purity: result.purity,
         slots: result.slots,
         research: result.research,
+        spawnTargets: result.spawnTargets,
         researchBaseline: new Set(result.research.unlockedClassNames),
         inventoryBaseline: result.slots.inventorySlots,
         armSlotsBaseline: result.slots.armSlots,
@@ -258,6 +281,7 @@ export const useSaveStore = create<SaveState>((set, get) => ({
       purity: null,
       slots: null,
       research: null,
+      spawnTargets: [],
       researchBaseline: new Set(),
       inventoryBaseline: null,
       armSlotsBaseline: null,
@@ -374,11 +398,49 @@ export const useSaveStore = create<SaveState>((set, get) => ({
     set((s) => updateResearchEdit(s, research, slots));
   },
 
+  async stageSpawnItems(playerInstanceName, items) {
+    const { api } = getSaveWorker();
+    const result = await api.spawnItems({ playerInstanceName, items });
+    set((s) => {
+      const target = s.spawnTargets.find(
+        (t) => t.instanceName === playerInstanceName
+      );
+      const playerName = target?.displayName ?? "player";
+      const otherEdits = s.staged.filter((e) => e.kind !== "spawnItems");
+      // Empty selection collapses to a no-op (the worker already cleared any
+      // prior crates).
+      if (result.totalItems === 0) {
+        return { staged: otherEdits, verification: { state: "idle" } };
+      }
+      const crateNote =
+        result.crateCount > 1 ? ` in ${result.crateCount} crates` : " in a crate";
+      const edit: StagedEdit = {
+        id: newId(),
+        kind: "spawnItems",
+        label: `Spawn ${result.totalItems} item${
+          result.totalItems === 1 ? "" : "s"
+        }${crateNote} → ${playerName}`,
+        totalItems: result.totalItems,
+        crateCount: result.crateCount,
+        playerName,
+      };
+      return {
+        staged: [...otherEdits, edit],
+        verification: { state: "idle" },
+      };
+    });
+  },
+
   removeStaged(id) {
-    // We can't trivially "undo" an edit on the in-worker save tree — the parser
-    // is mutate-in-place and we'd have to re-load the original file. For v1 we
-    // remove it from the staged list and warn the user via the UI that the
-    // applied state still reflects the edit until reload.
+    // Spawn-items CAN be reverted in memory (we track the objects we created),
+    // so clear them from the in-worker save. Other edit kinds mutate existing
+    // objects in place and can't be trivially undone — removing those from the
+    // list leaves the applied state intact until the file is re-loaded.
+    const edit = get().staged.find((e) => e.id === id);
+    if (edit?.kind === "spawnItems") {
+      const { api } = getSaveWorker();
+      void api.clearSpawnedItems();
+    }
     set((s) => ({ staged: s.staged.filter((e) => e.id !== id) }));
   },
 

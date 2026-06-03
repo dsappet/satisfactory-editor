@@ -89,6 +89,21 @@ const extractClassName = (path: string): string => {
   return m ? m[1] : path;
 };
 
+// Same string as above → the full save-class path
+// "/Game/.../Desc_IronOre.Desc_IronOre_C". Items don't carry their own path in
+// the docs the way schematics do (FullName), but every recipe / schematic cost
+// references items by full ItemClass path, so we harvest those into `itemPaths`
+// as a side effect of parsing the cost lists below.
+const extractFullPath = (raw: string): string => {
+  const m = /(\/Game\/[^"'\s]+_C)/.exec(raw);
+  return m ? m[1] : "";
+};
+
+// className → full save-class path, accumulated while parsing recipe/schematic
+// item references. Used to stamp `pathName` onto each item so the editor can
+// spawn it into a save (inventory item references need the full path).
+const itemPaths: Record<string, string> = {};
+
 // "((ItemClass=\"...IronOre_C'\",Amount=10),(ItemClass=\"...Coal_C'\",Amount=5))"
 // → [{ className: "Desc_IronOre_C", amount: 10 }, ...]
 type ItemQty = { className: string; amount: number };
@@ -99,7 +114,10 @@ const parseItemCostList = (s: string | undefined): ItemQty[] => {
     /ItemClass=\\?"([^"\\]+(?:\\.[^"\\]*)*)\\?",Amount=([\d.]+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(s)) !== null) {
-    out.push({ className: extractClassName(m[1]), amount: Number(m[2]) });
+    const className = extractClassName(m[1]);
+    const fullPath = extractFullPath(m[1]);
+    if (fullPath && !itemPaths[className]) itemPaths[className] = fullPath;
+    out.push({ className, amount: Number(m[2]) });
   }
   return out;
 };
@@ -140,6 +158,11 @@ type SlimItem = {
   sinkPoints: number;
   stackSize: string;
   isFluid: boolean;
+  /** Full save-class path, e.g.
+   *  "/Game/FactoryGame/Resource/Parts/IronPlate/Desc_IronPlate.Desc_IronPlate_C".
+   *  Empty when the item never appears in a recipe / schematic cost (rare).
+   *  Required to spawn the item into a save. */
+  pathName: string;
   /** Icon asset basename, e.g. "IconDesc_IronPlates_256". Empty if missing. */
   icon: string;
   /** True for FICSMAS / event-only content. Derived from display-name heuristic
@@ -196,6 +219,8 @@ for (const suffix of itemNativeClassSuffixes) {
       sinkPoints: intOrZero(entry.mResourceSinkPoints),
       stackSize: entry.mStackSize ?? "SS_MEDIUM",
       isFluid: entry.mForm === "RF_LIQUID" || entry.mForm === "RF_GAS",
+      // Stamped after recipe/schematic parsing populates `itemPaths`.
+      pathName: "",
       icon:
         extractIconBasename(entry.mSmallIcon) ||
         extractIconBasename(entry.mPersistentBigIcon),
@@ -397,6 +422,15 @@ for (const entry of groupByClass("FGRecipe")) {
   };
 }
 
+// Stamp each item with the full save-class path harvested from recipe /
+// schematic cost references above. Items that never appear in any recipe keep
+// an empty path and can't be spawned (the editor filters them out).
+let itemsWithPath = 0;
+for (const [className, item] of Object.entries(items)) {
+  item.pathName = itemPaths[className] ?? "";
+  if (item.pathName) itemsWithPath += 1;
+}
+
 // ───────── Write ─────────
 const output = {
   gameVersion: version,
@@ -420,7 +454,9 @@ for (const s of Object.values(schematics)) {
   typeCounts[s.type] = (typeCounts[s.type] ?? 0) + 1;
 }
 console.log(`wrote ${outPath} (${sizeMB} MB)`);
-console.log(`  items: ${Object.keys(items).length}`);
+console.log(
+  `  items: ${Object.keys(items).length} (${itemsWithPath} with spawn paths)`
+);
 console.log(`  schematics: ${Object.keys(schematics).length}`);
 for (const [t, n] of Object.entries(typeCounts).sort((a, b) => b[1] - a[1])) {
   console.log(`    ${t}: ${n}`);

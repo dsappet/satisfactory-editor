@@ -17,8 +17,14 @@ export type GameItem = {
   name: string;
   description: string;
   sinkPoints: number;
+  /** Stack-size enum from the game: SS_ONE / SS_SMALL / SS_MEDIUM / SS_BIG /
+   *  SS_HUGE / SS_FLUID. See `stackSizeLimit` for the numeric cap. */
   stackSize: string;
   isFluid: boolean;
+  /** Full save-class path, required to spawn the item into a save. Empty for
+   *  items that never appear in a recipe (and on game-data.json generated
+   *  before this field was added — re-run `bun run build:docs`). */
+  pathName?: string;
   /** Icon asset basename pulled from the game docs, e.g. "IconDesc_IronPlates_256". */
   icon: string;
   /** Limited-time event tag (FICSMAS). Undefined for base-game items. */
@@ -95,6 +101,34 @@ export const gameData = raw as unknown as GameData;
 
 export const itemName = (className: string): string =>
   gameData.items[className]?.name ?? className;
+
+/** Full save-class path for an item, or null if unknown (can't be spawned). */
+export const itemPath = (className: string): string | null =>
+  gameData.items[className]?.pathName || null;
+
+/**
+ * Numeric stack cap for an item's stack-size enum. Fluids return null — they
+ * live in pipes/tanks, not item slots, so they can't be put in a crate.
+ */
+export const STACK_SIZE_LIMITS: Record<string, number> = {
+  SS_ONE: 1,
+  SS_SMALL: 50,
+  SS_MEDIUM: 100,
+  SS_BIG: 200,
+  SS_HUGE: 500,
+};
+
+export const stackSizeLimit = (className: string): number | null => {
+  const item = gameData.items[className];
+  if (!item || item.isFluid || item.stackSize === "SS_FLUID") return null;
+  return STACK_SIZE_LIMITS[item.stackSize] ?? 100;
+};
+
+/** Items that can be spawned into a crate: have a known path and aren't fluid. */
+export const spawnableItems = (): Array<{ className: string } & GameItem> =>
+  Object.entries(gameData.items)
+    .filter(([, it]) => it.pathName && !it.isFluid && it.stackSize !== "SS_FLUID")
+    .map(([className, it]) => ({ className, ...it }));
 
 export const schematicsByType = (type: SchematicType): Schematic[] =>
   Object.values(gameData.schematics).filter((s) => s.type === type);
