@@ -1,0 +1,77 @@
+name: Regenerate game data
+
+# Regenerates src/data/game-data.json from a raw Satisfactory Docs file and
+# commits the result back to the branch this workflow is run on.
+#
+# WHY a manual trigger + URL: the raw Docs file (en-US.json, ~10 MB UTF-16,
+# Coffee-Stain-owned) is deliberately kept out of git, and there's no public
+# URL to fetch it from. So you provide a URL to a copy you host (a gist raw
+# link, a file host, etc.) when you run this. The job downloads it, runs
+# `bun run build:docs`, and pushes the regenerated JSON. The raw Docs file
+# itself is never committed (it's gitignored).
+#
+# To run: Actions tab -> "Regenerate game data" -> Run workflow -> pick the
+# branch and paste the Docs URL.
+
+on:
+  workflow_dispatch:
+    inputs:
+      docs_url:
+        description: "URL to the raw Docs file (en-US.json, UTF-16 LE) from a Satisfactory install. Must download the bytes as-is."
+        required: true
+        type: string
+      download_icons:
+        description: "Also mirror any newly-referenced icons from SCIM into public/icons/ (normally a manual step — review the diff)."
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-docs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download Docs file
+        # Pass the URL via env (not inline) to avoid shell injection.
+        env:
+          DOCS_URL: ${{ inputs.docs_url }}
+        run: |
+          mkdir -p data
+          curl -fSL "$DOCS_URL" -o data/en-US.json
+          echo "Downloaded $(wc -c < data/en-US.json) bytes to data/en-US.json"
+
+      - name: Regenerate game data
+        run: bun run build:docs
+
+      - name: Mirror icons
+        if: ${{ inputs.download_icons }}
+        run: bun run download:icons
+
+      - name: Commit regenerated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Stage only the generated artifacts; the raw Docs stays gitignored.
+          git add src/data/game-data.json public/icons
+          if git diff --cached --quiet; then
+            echo "No changes to game data — nothing to commit."
+          else
+            git commit -m "Regenerate game-data.json via build:docs workflow"
+            git push
+          fi

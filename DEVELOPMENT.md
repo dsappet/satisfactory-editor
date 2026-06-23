@@ -114,6 +114,15 @@ The build is **not** wired into `bun dev` or `bun build` — it only runs when
 you explicitly invoke it, because the raw docs file isn't required for
 normal development.
 
+**CI alternative.** You can also regenerate without a local checkout via the
+**Regenerate game data** GitHub Actions workflow
+(`.github/workflows/build-docs.yml`): run it from the Actions tab, pick the
+branch, and paste a URL to a copy of the raw `en-US.json` you host (a gist raw
+link, a file host, etc.). It downloads the Docs, runs `build:docs`, and commits
+the regenerated `src/data/game-data.json` back to that branch. The raw Docs
+file is still never committed. (Validation — typecheck, lint, test, build —
+runs automatically on every PR via `.github/workflows/ci.yml`.)
+
 ### Updating icons
 
 Item and schematic icons are mirrored from satisfactory-calculator.com (SCIM)
