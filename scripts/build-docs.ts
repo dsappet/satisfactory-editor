@@ -205,6 +205,11 @@ const itemNativeClassSuffixes = [
   "FGItemDescriptorPowerBoosterFuel",
   "FGConsumableDescriptor",
   "FGResourceDescriptor",
+  // Power Shard (Desc_CrystalShard_C) and Somersloop (Desc_WAT1_C) live under
+  // this class — without it both go missing from items, so the spawn tab can't
+  // offer them. Mercer Sphere (Desc_WAT2_C) is a plain FGItemDescriptor and was
+  // unaffected, which masked the gap.
+  "FGPowerShardDescriptor",
 ];
 
 const items: Record<string, SlimItem> = {};
